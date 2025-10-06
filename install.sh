@@ -124,8 +124,37 @@ echo ""
 if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
     echo -e "${YELLOW}Warning: $INSTALL_DIR is not in your PATH${NC}"
     echo ""
-    echo "Add this line to your ~/.bashrc or ~/.zshrc:"
-    echo "  export PATH=\"\$HOME/bin:\$PATH\""
+
+    # Add to both bashrc and zshrc to cover common shells
+    SHELL_RCS=("$HOME/.bashrc" "$HOME/.zshrc")
+    NEEDS_RESTART=false
+
+    for RC in "${SHELL_RCS[@]}"; do
+        if grep -q 'export PATH="$HOME/bin:$PATH"' "$RC" 2>/dev/null; then
+            echo -e "${GREEN}✓ $INSTALL_DIR already in PATH in $RC${NC}"
+        else
+            echo "" >> "$RC"
+            echo '# Added by SafeClaude installer' >> "$RC"
+            echo 'export PATH="$HOME/bin:$PATH"' >> "$RC"
+            echo -e "${GREEN}✓ Added to PATH in $RC${NC}"
+            NEEDS_RESTART=true
+        fi
+    done
+
+    if [[ "$NEEDS_RESTART" == true ]]; then
+        # Determine current shell RC
+        CURRENT_RC=""
+        case "$SHELL" in
+            */bash) CURRENT_RC="$HOME/.bashrc" ;;
+            */zsh) CURRENT_RC="$HOME/.zshrc" ;;
+        esac
+
+        if [[ -n "$CURRENT_RC" ]]; then
+            echo -e "${YELLOW}  Run 'source $CURRENT_RC' or restart your terminal to activate${NC}"
+        else
+            echo -e "${YELLOW}  Restart your terminal to activate${NC}"
+        fi
+    fi
     echo ""
 else
     echo -e "${GREEN}✓ $INSTALL_DIR is in your PATH${NC}"

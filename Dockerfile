@@ -20,7 +20,7 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
     && rm -rf /var/lib/apt/lists/*
 
 # Install Claude Code CLI
-RUN npm install -g @anthropic/claude-code
+RUN curl -fsSL https://cli.anthropic.com/install.sh | sh
 
 # Accept git config as build arguments
 ARG GIT_USER_NAME
