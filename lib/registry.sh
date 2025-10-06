@@ -26,6 +26,7 @@ init_safeclaude_dir() {
   "auto_setup_branch_protection": true
 }
 EOF
+        chmod 600 "$SAFECLAUDE_DIR/config.json"
     fi
 }
 
@@ -43,8 +44,9 @@ add_project() {
     local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
     # Use jq to add/update the project with proper temp file handling
-    local temp_file="${PROJECTS_FILE}.tmp.$$"
+    local temp_file=$(mktemp "${PROJECTS_FILE}.tmp.XXXXXXXXXX")
     trap "rm -f '$temp_file'" EXIT
+    chmod 600 "$temp_file"
 
     if ! jq --arg name "$name" \
        --arg url "$url" \
@@ -120,8 +122,9 @@ remove_project() {
         return 1
     fi
 
-    local temp_file="${PROJECTS_FILE}.tmp.$$"
+    local temp_file=$(mktemp "${PROJECTS_FILE}.tmp.XXXXXXXXXX")
     trap "rm -f '$temp_file'" EXIT
+    chmod 600 "$temp_file"
 
     if ! jq --arg name "$name" 'del(.[$name])' "$PROJECTS_FILE" > "$temp_file"; then
         echo "Error: Failed to update projects database" >&2
@@ -145,8 +148,9 @@ update_last_used() {
         return 1
     fi
 
-    local temp_file="${PROJECTS_FILE}.tmp.$$"
+    local temp_file=$(mktemp "${PROJECTS_FILE}.tmp.XXXXXXXXXX")
     trap "rm -f '$temp_file'" EXIT
+    chmod 600 "$temp_file"
 
     if ! jq --arg name "$name" \
        --arg last_used "$timestamp" \
@@ -191,8 +195,9 @@ set_api_key() {
     init_safeclaude_dir
 
     local config_file="$SAFECLAUDE_DIR/config.json"
-    local temp_file="${config_file}.tmp.$$"
+    local temp_file=$(mktemp "${config_file}.tmp.XXXXXXXXXX")
     trap "rm -f '$temp_file'" EXIT
+    chmod 600 "$temp_file"
 
     if ! jq --arg key "$api_key" \
        '.anthropic_api_key = $key' "$config_file" > "$temp_file"; then
@@ -205,6 +210,8 @@ set_api_key() {
         rm -f "$temp_file"
         return 1
     }
+
+    chmod 600 "$config_file"
 }
 
 # Get API key from config
@@ -230,8 +237,9 @@ remove_api_key() {
         return 0
     fi
 
-    local temp_file="${config_file}.tmp.$$"
+    local temp_file=$(mktemp "${config_file}.tmp.XXXXXXXXXX")
     trap "rm -f '$temp_file'" EXIT
+    chmod 600 "$temp_file"
 
     if ! jq 'del(.anthropic_api_key)' "$config_file" > "$temp_file"; then
         echo "Error: Failed to update config" >&2

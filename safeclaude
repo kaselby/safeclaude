@@ -391,6 +391,19 @@ cmd_start() {
         exit 1
     fi
 
+    # Validate agent name (alphanumeric, hyphens, underscores only)
+    if [[ ! "$agent_name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        echo -e "${RED}Error: Agent name must contain only letters, numbers, hyphens, and underscores${NC}"
+        echo "Invalid name: $agent_name"
+        exit 1
+    fi
+
+    # Validate agent name length
+    if [ ${#agent_name} -gt 64 ]; then
+        echo -e "${RED}Error: Agent name too long (max 64 characters)${NC}"
+        exit 1
+    fi
+
     if ! project_exists "$name"; then
         echo -e "${RED}Error: Project '$name' not found${NC}"
         exit 1

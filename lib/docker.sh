@@ -3,7 +3,8 @@
 # SafeClaude Docker Command Builder
 # Constructs docker run commands with proper volume mounting and options
 
-IMAGE_NAME="claude-sandbox"
+# Use username in image name to prevent namespace collisions on shared systems
+IMAGE_NAME="safeclaude-$(whoami)/claude-sandbox"
 
 # Build docker run command
 # Usage: build_docker_command <project_name> <repo_url> <key_path> <options>

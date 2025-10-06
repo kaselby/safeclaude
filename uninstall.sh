@@ -5,7 +5,8 @@ set -e
 echo "Uninstalling SafeClaude..."
 echo ""
 
-IMAGE_NAME="claude-sandbox"
+# Use username in image name to prevent namespace collisions on shared systems
+IMAGE_NAME="safeclaude-$(whoami)/claude-sandbox"
 INSTALL_DIR="$HOME/bin"
 SAFECLAUDE_DIR="$HOME/.safeclaude"
 
@@ -15,7 +16,7 @@ RUNNING_CONTAINERS=$(docker ps -a --filter "name=safeclaude-" -q)
 
 if [ -n "$RUNNING_CONTAINERS" ]; then
     echo "Stopping and removing SafeClaude containers..."
-    docker rm -f $RUNNING_CONTAINERS
+    echo "$RUNNING_CONTAINERS" | xargs docker rm -f
     echo "✓ Containers removed"
 else
     echo "✓ No running SafeClaude containers found"
@@ -57,7 +58,7 @@ if [ -n "$VOLUMES" ]; then
     read -p "Remove these volumes? [y/N] " -n 1 -r
     echo ""
     if [[ $REPLY =~ ^[Yy]$ ]]; then
-        docker volume rm $VOLUMES
+        echo "$VOLUMES" | xargs docker volume rm
         echo "✓ Volumes removed"
     else
         echo "⚠ Volumes preserved"

@@ -15,7 +15,8 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 # Configuration
-IMAGE_NAME="claude-sandbox"
+# Use username in image name to prevent namespace collisions on shared systems
+IMAGE_NAME="safeclaude-$(whoami)/claude-sandbox"
 INSTALL_DIR="$HOME/bin"
 SAFECLAUDE_DIR="$HOME/.safeclaude"
 
