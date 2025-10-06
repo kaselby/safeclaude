@@ -23,7 +23,11 @@ init_safeclaude_dir() {
 {
   "default_persist": false,
   "default_network": false,
-  "auto_setup_branch_protection": true
+  "auto_setup_branch_protection": true,
+  "use_host_prompt": true,
+  "use_host_agents": true,
+  "use_host_commands": true,
+  "sandbox_instructions_file": "$SAFECLAUDE_DIR/sandbox_instructions.md"
 }
 EOF
         chmod 600 "$SAFECLAUDE_DIR/config.json"
@@ -44,8 +48,8 @@ add_project() {
     local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
     # Use jq to add/update the project with proper temp file handling
+    trap "rm -f '$temp_file' 2>/dev/null" EXIT INT TERM
     local temp_file=$(mktemp "${PROJECTS_FILE}.tmp.XXXXXXXXXX")
-    trap "rm -f '$temp_file'" EXIT
     chmod 600 "$temp_file"
 
     if ! jq --arg name "$name" \
@@ -122,8 +126,8 @@ remove_project() {
         return 1
     fi
 
+    trap "rm -f '$temp_file' 2>/dev/null" EXIT INT TERM
     local temp_file=$(mktemp "${PROJECTS_FILE}.tmp.XXXXXXXXXX")
-    trap "rm -f '$temp_file'" EXIT
     chmod 600 "$temp_file"
 
     if ! jq --arg name "$name" 'del(.[$name])' "$PROJECTS_FILE" > "$temp_file"; then
@@ -148,8 +152,8 @@ update_last_used() {
         return 1
     fi
 
+    trap "rm -f '$temp_file' 2>/dev/null" EXIT INT TERM
     local temp_file=$(mktemp "${PROJECTS_FILE}.tmp.XXXXXXXXXX")
-    trap "rm -f '$temp_file'" EXIT
     chmod 600 "$temp_file"
 
     if ! jq --arg name "$name" \
@@ -195,8 +199,8 @@ set_api_key() {
     init_safeclaude_dir
 
     local config_file="$SAFECLAUDE_DIR/config.json"
+    trap "rm -f '$temp_file' 2>/dev/null" EXIT INT TERM
     local temp_file=$(mktemp "${config_file}.tmp.XXXXXXXXXX")
-    trap "rm -f '$temp_file'" EXIT
     chmod 600 "$temp_file"
 
     if ! jq --arg key "$api_key" \
@@ -237,8 +241,8 @@ remove_api_key() {
         return 0
     fi
 
+    trap "rm -f '$temp_file' 2>/dev/null" EXIT INT TERM
     local temp_file=$(mktemp "${config_file}.tmp.XXXXXXXXXX")
-    trap "rm -f '$temp_file'" EXIT
     chmod 600 "$temp_file"
 
     if ! jq 'del(.anthropic_api_key)' "$config_file" > "$temp_file"; then
@@ -251,4 +255,56 @@ remove_api_key() {
         rm -f "$temp_file"
         return 1
     }
+}
+
+# Get config value
+# Usage: get_config_value <key> [default]
+get_config_value() {
+    local key="$1"
+    local default="${2:-false}"
+    local config_file="$SAFECLAUDE_DIR/config.json"
+
+    if [ ! -f "$config_file" ]; then
+        echo "$default"
+        return
+    fi
+
+    local value=$(jq -r --arg key "$key" --arg default "$default" '.[$key] // $default' "$config_file")
+    echo "$value"
+}
+
+# Set config value
+# Usage: set_config_value <key> <value>
+set_config_value() {
+    local key="$1"
+    local value="$2"
+
+    init_safeclaude_dir
+
+    local config_file="$SAFECLAUDE_DIR/config.json"
+    trap "rm -f '$temp_file' 2>/dev/null" EXIT INT TERM
+    local temp_file=$(mktemp "${config_file}.tmp.XXXXXXXXXX")
+    chmod 600 "$temp_file"
+
+    # Convert string boolean values to actual JSON booleans
+    if [[ "$value" == "true" ]] || [[ "$value" == "false" ]]; then
+        if ! jq --arg key "$key" --argjson val "$value" '.[$key] = $val' "$config_file" > "$temp_file"; then
+            echo "Error: Failed to update config" >&2
+            rm -f "$temp_file"
+            return 1
+        fi
+    else
+        if ! jq --arg key "$key" --arg val "$value" '.[$key] = $val' "$config_file" > "$temp_file"; then
+            echo "Error: Failed to update config" >&2
+            rm -f "$temp_file"
+            return 1
+        fi
+    fi
+
+    mv -f "$temp_file" "$config_file" || {
+        rm -f "$temp_file"
+        return 1
+    }
+
+    chmod 600 "$config_file"
 }

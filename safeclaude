@@ -43,8 +43,11 @@ ${BLUE}RUN COMMANDS${NC}
   run <name> [OPTIONS]          Run Claude Code for a project
 
   Options for 'run':
-    --network                   Enable network access
-    --persist                   Persist Claude config between sessions
+    --network                       Enable network access
+    --persist                       Persist Claude config between sessions
+    --use-host-prompt=true/false    Copy CLAUDE.md (default: true)
+    --use-host-agents=true/false    Copy agents/ (default: true)
+    --use-host-commands=true/false  Copy commands/ (default: true)
 
 ${BLUE}BACKGROUND COMMANDS${NC}
   start <name> <agent-name>     Start Claude in background
@@ -54,7 +57,10 @@ ${BLUE}BACKGROUND COMMANDS${NC}
   stop <agent-name>             Stop and remove an agent
 
 ${BLUE}CONFIGURATION COMMANDS${NC}
-  config set-api-key <key>      Store Anthropic API key in config
+  config set <key> <value>      Set a config value
+  config get [key]              Get config value(s)
+  config list                   List all config
+  config set-api-key <key>      Store Anthropic API key
   config get-api-key            Show stored API key (masked)
   config remove-api-key         Remove API key from config
 
@@ -71,6 +77,15 @@ ${BLUE}EXAMPLES${NC}
 
   # Run with network and persistence
   safeclaude run myrepo --network --persist
+
+  # Disable copying slash commands (e.g., if they depend on MCP tools)
+  safeclaude run myrepo --use-host-commands=false
+
+  # Or set it as a default in config
+  safeclaude config set use_host_commands false
+
+  # Run without copying host config
+  safeclaude run myrepo --no-host-config
 
   # Start in background
   safeclaude start myrepo agent-1
@@ -363,6 +378,32 @@ cmd_run() {
     # Update last used
     update_last_used "$name"
 
+    # Read config defaults and prepend them to arguments
+    # This allows command-line flags to override config settings
+    local config_args=()
+
+    # Read host config settings from config and convert to flags
+    local use_prompt=$(get_config_value 'use_host_prompt' 'true')
+    local use_agents=$(get_config_value 'use_host_agents' 'true')
+    local use_commands=$(get_config_value 'use_host_commands' 'true')
+
+    config_args+=("--use-host-prompt=$use_prompt")
+    config_args+=("--use-host-agents=$use_agents")
+    config_args+=("--use-host-commands=$use_commands")
+
+    # Get sandbox instructions file path
+    local instructions_file=$(get_config_value 'sandbox_instructions_file' "$SAFECLAUDE_DIR/sandbox_instructions.md")
+
+    # Warn if instructions file is outside home directory
+    if [ -n "$instructions_file" ] && [ -f "$instructions_file" ]; then
+        if [[ ! "$instructions_file" =~ ^$HOME/ ]] && [[ ! "$instructions_file" =~ ^$SAFECLAUDE_DIR/ ]]; then
+            echo -e "${YELLOW}Warning: sandbox_instructions_file is outside your home directory${NC}"
+            echo "  File: $instructions_file"
+            echo "  This file will be readable by Claude in the container."
+            echo ""
+        fi
+    fi
+
     echo -e "${GREEN}SafeClaude${NC}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "Project:    $name"
@@ -372,8 +413,8 @@ cmd_run() {
     echo "Launching sandbox container..."
     echo ""
 
-    # Build and execute docker command
-    build_docker_command "$name" "$repo_url" "$key_path" "$@" | execute_docker_command
+    # Build and execute docker command (config args + user args)
+    build_docker_command "$name" "$repo_url" "$key_path" "$instructions_file" "${config_args[@]}" "$@" | execute_docker_command
 
     echo ""
     echo -e "${GREEN}Sandbox session ended${NC}"
@@ -450,11 +491,26 @@ cmd_start() {
     # Update last used
     update_last_used "$name"
 
+    # Get sandbox instructions file path
+    local instructions_file=$(get_config_value 'sandbox_instructions_file' "$SAFECLAUDE_DIR/sandbox_instructions.md")
+
     echo -e "${GREEN}Starting agent '$agent_name' for project '$name'...${NC}"
     echo ""
 
     # Build and execute docker command in detached mode
-    build_docker_command "$name" "$repo_url" "$key_path" --detach --name "$agent_name" --network | execute_docker_command
+    build_docker_command "$name" "$repo_url" "$key_path" "$instructions_file" --detach --name "$agent_name" --network | execute_docker_command
+
+    # Give container time to fail if it's going to
+    sleep 2
+
+    # Check if container is still running
+    if ! container_running "$name-$agent_name"; then
+        echo -e "${RED}Error: Container failed to start${NC}"
+        echo ""
+        echo "View error logs with:"
+        echo "  safeclaude logs $name-$agent_name"
+        exit 1
+    fi
 
     echo -e "${GREEN}Agent started successfully${NC}"
     echo ""
@@ -614,13 +670,67 @@ cmd_config() {
             fi
             ;;
 
+        set)
+            local key="$1"
+            local value="$2"
+
+            if [ -z "$key" ] || [ -z "$value" ]; then
+                echo -e "${RED}Error: Both key and value required${NC}"
+                echo "Usage: safeclaude config set <key> <value>"
+                echo ""
+                echo "Available keys:"
+                echo "  use_host_prompt      Copy CLAUDE.md (true/false)"
+                echo "  use_host_agents      Copy agents/ (true/false)"
+                echo "  use_host_commands    Copy commands/ (true/false)"
+                echo "  default_network      Enable network by default (true/false)"
+                echo "  default_persist      Enable persistence by default (true/false)"
+                exit 1
+            fi
+
+            if set_config_value "$key" "$value"; then
+                echo -e "${GREEN}✓ Config updated: $key = $value${NC}"
+            else
+                echo -e "${RED}Error: Failed to update config${NC}"
+                exit 1
+            fi
+            ;;
+
+        get)
+            local key="$1"
+
+            if [ -z "$key" ]; then
+                # Show all config
+                echo -e "${GREEN}SafeClaude Configuration${NC}"
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                echo ""
+                cat "$SAFECLAUDE_DIR/config.json" | jq -r 'to_entries[] | "  \(.key): \(.value)"'
+                echo ""
+                echo "Location: $SAFECLAUDE_DIR/config.json"
+            else
+                local value=$(get_config_value "$key")
+                echo "$key: $value"
+            fi
+            ;;
+
+        list)
+            echo -e "${GREEN}SafeClaude Configuration${NC}"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo ""
+            cat "$SAFECLAUDE_DIR/config.json" | jq -r 'to_entries[] | "  \(.key): \(.value)"'
+            echo ""
+            echo "Location: $SAFECLAUDE_DIR/config.json"
+            ;;
+
         *)
             echo -e "${RED}Error: Unknown config subcommand '$subcommand'${NC}"
             echo ""
             echo "Available subcommands:"
-            echo "  safeclaude config set-api-key <key>"
-            echo "  safeclaude config get-api-key"
-            echo "  safeclaude config remove-api-key"
+            echo "  safeclaude config set <key> <value>      Set a config value"
+            echo "  safeclaude config get [key]              Get config value(s)"
+            echo "  safeclaude config list                   List all config"
+            echo "  safeclaude config set-api-key <key>      Store API key"
+            echo "  safeclaude config get-api-key            Show API key"
+            echo "  safeclaude config remove-api-key         Remove API key"
             exit 1
             ;;
     esac

@@ -80,13 +80,22 @@ if [ ! -f "$SAFECLAUDE_DIR/projects.json" ]; then
     echo '{}' > "$SAFECLAUDE_DIR/projects.json"
 fi
 
+# Copy default instructions file if it doesn't exist
+if [ ! -f "$SAFECLAUDE_DIR/sandbox_instructions.md" ]; then
+    cp "$SCRIPT_DIR/default_instructions.md" "$SAFECLAUDE_DIR/sandbox_instructions.md"
+fi
+
 # Initialize config.json with defaults
 if [ ! -f "$SAFECLAUDE_DIR/config.json" ]; then
     cat > "$SAFECLAUDE_DIR/config.json" <<EOF
 {
   "default_persist": false,
   "default_network": false,
-  "auto_setup_branch_protection": true
+  "auto_setup_branch_protection": true,
+  "use_host_prompt": true,
+  "use_host_agents": true,
+  "use_host_commands": true,
+  "sandbox_instructions_file": "$SAFECLAUDE_DIR/sandbox_instructions.md"
 }
 EOF
 fi

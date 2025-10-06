@@ -150,10 +150,13 @@ safeclaude run <name> --network --persist
 **Options:**
 - `--network`: Enable network access in container (disabled by default for security)
 - `--persist`: Persist Claude's config and conversation history between sessions
+- `--use-host-prompt=true/false`: Copy CLAUDE.md (default: true)
+- `--use-host-agents=true/false`: Copy agents/ directory (default: true)
+- `--use-host-commands=true/false`: Copy commands/ directory (default: true)
 
 **Examples:**
 ```bash
-# Basic run (network isolated, ephemeral)
+# Basic run (network isolated, ephemeral, with host config)
 safeclaude run myrepo
 
 # Enable network (for installing packages)
@@ -162,8 +165,15 @@ safeclaude run myrepo --network
 # Enable persistence (Claude remembers context)
 safeclaude run myrepo --persist
 
-# Both
-safeclaude run myrepo --network --persist
+# Disable copying slash commands (useful if they depend on MCP tools)
+safeclaude run myrepo --use-host-commands=false
+
+# Disable all host config for this run
+safeclaude run myrepo --use-host-prompt=false --use-host-agents=false --use-host-commands=false
+
+# Set permanent defaults via config
+safeclaude config set use_host_commands false
+safeclaude run myrepo  # Will use config default
 ```
 
 ---
@@ -290,6 +300,102 @@ safeclaude run myrepo --persist
 
 ---
 
+## Host Configuration Copying
+
+By default, SafeClaude copies your host `~/.claude/` configuration into the container so Claude has access to your preferences, custom agents, and slash commands.
+
+### What Gets Copied
+
+✅ **CLAUDE.md** - Your global instructions and coding preferences
+  - SafeClaude appends sandbox-specific instructions about branch protection and PRs
+
+✅ **agents/** - Custom agents (e.g., research-librarian, elite-code-reviewer)
+  - Enables Agent Research Library and other custom agents
+
+✅ **commands/** - Slash commands (e.g., /commit, /review-pr)
+  - Your custom workflows available in the sandbox
+
+### What Doesn't Get Copied
+
+❌ **config.json** - Host-specific settings (incompatible with container environment)
+
+❌ **mcp_config.json** - MCP tools configuration
+  - Reason: MCP servers run on host and can't be accessed from isolated container
+  - Future: May add MCP support with in-container servers
+
+❌ **Conversation history and cache** - Fresh start each session (unless `--persist` is used)
+
+### Fine-Grained Control
+
+You can selectively enable/disable which host config gets copied:
+
+```bash
+# Disable only slash commands (keep prompt and agents)
+safeclaude run myrepo --use-host-commands=false
+
+# Disable prompt but keep agents and commands
+safeclaude run myrepo --use-host-prompt=false
+
+# Completely clean environment
+safeclaude run myrepo --use-host-prompt=false --use-host-agents=false --use-host-commands=false
+```
+
+**Set permanent defaults:**
+
+```bash
+# Disable slash commands by default (e.g., if they depend on MCP tools)
+safeclaude config set use_host_commands false
+
+# View current config
+safeclaude config list
+
+# Override config for a single run
+safeclaude run myrepo --use-host-commands=true
+```
+
+This is useful for:
+- Disabling MCP-dependent slash commands
+- Testing with vanilla Claude Code settings
+- Avoiding conflicts with host-specific instructions
+- Debugging issues related to custom config
+
+### Custom Sandbox Instructions
+
+SafeClaude appends custom instructions to your `CLAUDE.md` to inform Claude about the sandbox environment (branch protection, ephemeral filesystem, etc.).
+
+**Default instructions** are stored in `~/.safeclaude/sandbox_instructions.md` (created during installation from `default_instructions.md`).
+
+**Customize the instructions:**
+
+```bash
+# Edit the instructions file directly
+nano ~/.safeclaude/sandbox_instructions.md
+
+# Or use your own file
+safeclaude config set sandbox_instructions_file /path/to/your/instructions.md
+```
+
+**Example custom instructions:**
+
+```markdown
+# My Custom Sandbox Instructions
+
+## Important Reminders
+- Always run tests before committing
+- Follow the project's coding style guide
+- Document all new functions
+
+## Workflow
+1. Create a feature branch
+2. Make changes
+3. Run `npm test`
+4. Push and create PR
+```
+
+The instructions are appended to your `CLAUDE.md` when the container starts, so Claude sees both your global instructions and the sandbox-specific context.
+
+---
+
 ## Security Model
 
 ### What Claude CAN Do in Sandbox
@@ -300,6 +406,7 @@ safeclaude run myrepo --persist
 ✅ Create and push feature branches
 ✅ Create pull requests (if `gh` is authenticated)
 ✅ Install packages (with `--network` flag)
+✅ Use your custom agents and slash commands (via `--host-config`)
 
 ### What Claude CANNOT Do
 

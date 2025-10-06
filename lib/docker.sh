@@ -7,18 +7,24 @@
 IMAGE_NAME="safeclaude-$(whoami)/claude-sandbox"
 
 # Build docker run command
-# Usage: build_docker_command <project_name> <repo_url> <key_path> <options>
-# Options: --network, --persist, --detach, --name <container_name>
+# Usage: build_docker_command <project_name> <repo_url> <key_path> <instructions_file> <options>
+# Options: --network, --persist, --detach, --name <container_name>, --host-config, --no-host-config,
+#          --use-host-prompt=, --use-host-agents=, --use-host-commands=
 build_docker_command() {
     local project_name="$1"
     local repo_url="$2"
     local key_path="$3"
-    shift 3
+    local instructions_file="$4"
+    shift 4
 
     local enable_network=false
     local enable_persist=false
     local detach=false
     local container_name=""
+    local enable_host_config=true  # Default: copy host config
+    local copy_prompt=true
+    local copy_agents=true
+    local copy_commands=true
 
     # Parse options
     while [[ $# -gt 0 ]]; do
@@ -38,6 +44,50 @@ build_docker_command() {
             --name)
                 container_name="$2"
                 shift 2
+                ;;
+            --host-config)
+                enable_host_config=true
+                shift
+                ;;
+            --no-host-config)
+                enable_host_config=false
+                copy_prompt=false
+                copy_agents=false
+                copy_commands=false
+                shift
+                ;;
+            --use-host-prompt=*)
+                local value="${1#*=}"
+                # Normalize boolean value
+                value=$(echo "$value" | tr '[:upper:]' '[:lower:]')
+                if [[ "$value" == "true" ]] || [[ "$value" == "yes" ]] || [[ "$value" == "1" ]]; then
+                    copy_prompt="true"
+                else
+                    copy_prompt="false"
+                fi
+                shift
+                ;;
+            --use-host-agents=*)
+                local value="${1#*=}"
+                # Normalize boolean value
+                value=$(echo "$value" | tr '[:upper:]' '[:lower:]')
+                if [[ "$value" == "true" ]] || [[ "$value" == "yes" ]] || [[ "$value" == "1" ]]; then
+                    copy_agents="true"
+                else
+                    copy_agents="false"
+                fi
+                shift
+                ;;
+            --use-host-commands=*)
+                local value="${1#*=}"
+                # Normalize boolean value
+                value=$(echo "$value" | tr '[:upper:]' '[:lower:]')
+                if [[ "$value" == "true" ]] || [[ "$value" == "yes" ]] || [[ "$value" == "1" ]]; then
+                    copy_commands="true"
+                else
+                    copy_commands="false"
+                fi
+                shift
                 ;;
             *)
                 shift
@@ -83,6 +133,19 @@ build_docker_command() {
     # Mount deploy key (read-only)
     docker_args+=("-v" "$key_path:/root/.ssh/id_rsa:ro")
 
+    # Mount host ~/.claude/ directory if host-config is enabled (read-only)
+    # Copies: CLAUDE.md, agents/, commands/ (via startup script)
+    # Skips: config.json, mcp_config.json (security/compatibility reasons)
+    # TODO: Future enhancement - support MCP tools (requires running MCP servers in container)
+    if [ "$enable_host_config" = true ] && [ -d "$HOME/.claude" ]; then
+        docker_args+=("-v" "$HOME/.claude:/tmp/host_claude:ro")
+    fi
+
+    # Mount sandbox instructions file if it exists (read-only)
+    if [ -f "$instructions_file" ]; then
+        docker_args+=("-v" "$instructions_file:/tmp/sandbox_instructions.md:ro")
+    fi
+
     # Pass Anthropic API key
     if [ -n "$ANTHROPIC_API_KEY" ]; then
         docker_args+=("-e" "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY")
@@ -90,6 +153,11 @@ build_docker_command() {
 
     # Pass repository URL as environment variable (SECURITY: prevents command injection)
     docker_args+=("-e" "REPO_URL=$repo_url")
+
+    # Pass host config copy flags as environment variables
+    docker_args+=("-e" "USE_HOST_PROMPT=$copy_prompt")
+    docker_args+=("-e" "USE_HOST_AGENTS=$copy_agents")
+    docker_args+=("-e" "USE_HOST_COMMANDS=$copy_commands")
 
     # Persistent volumes (optional)
     if [ "$enable_persist" = true ]; then
@@ -112,6 +180,39 @@ set -e
 
 # Add GitHub to known hosts
 ssh-keyscan github.com >> /root/.ssh/known_hosts 2>/dev/null
+
+# Copy host Claude config if available
+if [ -d /tmp/host_claude ]; then
+    echo 'Copying host Claude configuration...'
+    mkdir -p /home/node/.claude
+
+    # Copy CLAUDE.md if enabled and it exists
+    if [ \"\$USE_HOST_PROMPT\" = \"true\" ] && [ -f /tmp/host_claude/CLAUDE.md ]; then
+        cp /tmp/host_claude/CLAUDE.md /home/node/.claude/CLAUDE.md
+
+        # Append SafeClaude sandbox instructions from file
+        if [ -f /tmp/sandbox_instructions.md ]; then
+            echo '' >> /home/node/.claude/CLAUDE.md
+            cat /tmp/sandbox_instructions.md >> /home/node/.claude/CLAUDE.md
+        fi
+
+        echo '  ✓ Copied CLAUDE.md with sandbox instructions'
+    fi
+
+    # Copy agents/ directory if enabled and it exists
+    if [ \"\$USE_HOST_AGENTS\" = \"true\" ] && [ -d /tmp/host_claude/agents ]; then
+        cp -r /tmp/host_claude/agents /home/node/.claude/
+        echo '  ✓ Copied agents/'
+    fi
+
+    # Copy commands/ directory if enabled and it exists
+    if [ \"\$USE_HOST_COMMANDS\" = \"true\" ] && [ -d /tmp/host_claude/commands ]; then
+        cp -r /tmp/host_claude/commands /home/node/.claude/
+        echo '  ✓ Copied commands/'
+    fi
+
+    echo ''
+fi
 
 echo 'Cloning repository...'
 if ! git clone \"\$REPO_URL\" repo 2>&1; then
@@ -141,10 +242,45 @@ exec claude --dangerously-skip-permissions
 STARTUP_SCRIPT
 ")
     else
-        # For background containers, simpler startup
+        # For background containers, include host config copy
         docker_args+=("bash" "-c" "
+set -e
+
 ssh-keyscan github.com >> /root/.ssh/known_hosts 2>/dev/null
-git clone \"\$REPO_URL\" repo 2>&1 && cd repo && claude --dangerously-skip-permissions
+
+# Copy host Claude config if available
+if [ -d /tmp/host_claude ]; then
+    mkdir -p /home/node/.claude
+
+    # Copy based on environment flags
+    if [ \"\$USE_HOST_PROMPT\" = \"true\" ] && [ -f /tmp/host_claude/CLAUDE.md ]; then
+        cp /tmp/host_claude/CLAUDE.md /home/node/.claude/CLAUDE.md
+
+        # Append SafeClaude sandbox instructions from file
+        if [ -f /tmp/sandbox_instructions.md ]; then
+            echo '' >> /home/node/.claude/CLAUDE.md
+            cat /tmp/sandbox_instructions.md >> /home/node/.claude/CLAUDE.md
+        fi
+    fi
+
+    [ \"\$USE_HOST_AGENTS\" = \"true\" ] && [ -d /tmp/host_claude/agents ] && cp -r /tmp/host_claude/agents /home/node/.claude/ || true
+    [ \"\$USE_HOST_COMMANDS\" = \"true\" ] && [ -d /tmp/host_claude/commands ] && cp -r /tmp/host_claude/commands /home/node/.claude/ || true
+fi
+
+# Clone repository with error handling
+if ! git clone \"\$REPO_URL\" repo 2>&1; then
+    echo '' >&2
+    echo 'FATAL: Failed to clone repository' >&2
+    echo 'Possible causes:' >&2
+    echo '  - Deploy key not added to GitHub' >&2
+    echo '  - Repository URL is incorrect' >&2
+    echo '  - Network access is disabled' >&2
+    echo '' >&2
+    sleep 5
+    exit 1
+fi
+
+cd repo && exec claude --dangerously-skip-permissions
 ")
     fi
 
