@@ -2,22 +2,23 @@
 
 set -e
 
-echo "Uninstalling Claude Code Sandbox..."
+echo "Uninstalling SafeClaude..."
 echo ""
 
 IMAGE_NAME="claude-sandbox"
 INSTALL_DIR="$HOME/bin"
+SAFECLAUDE_DIR="$HOME/.safeclaude"
 
-# Stop and remove any running sandbox containers
-echo "Checking for running sandbox containers..."
-RUNNING_CONTAINERS=$(docker ps -a --filter "name=claude-sandbox-" -q)
+# Stop and remove any running SafeClaude containers
+echo "Checking for running SafeClaude containers..."
+RUNNING_CONTAINERS=$(docker ps -a --filter "name=safeclaude-" -q)
 
 if [ -n "$RUNNING_CONTAINERS" ]; then
-    echo "Stopping and removing sandbox containers..."
+    echo "Stopping and removing SafeClaude containers..."
     docker rm -f $RUNNING_CONTAINERS
     echo "✓ Containers removed"
 else
-    echo "✓ No running sandbox containers found"
+    echo "✓ No running SafeClaude containers found"
 fi
 echo ""
 
@@ -31,25 +32,55 @@ else
 fi
 echo ""
 
-# Remove sandbox script
-echo "Removing sandbox command..."
-if [ -f "$INSTALL_DIR/sandbox" ]; then
-    rm "$INSTALL_DIR/sandbox"
-    echo "✓ Sandbox command removed from $INSTALL_DIR"
+# Remove safeclaude script and lib directory
+echo "Removing SafeClaude command..."
+if [ -f "$INSTALL_DIR/safeclaude" ]; then
+    rm "$INSTALL_DIR/safeclaude"
+    echo "✓ SafeClaude command removed from $INSTALL_DIR"
 else
-    echo "✓ Sandbox command not found (already removed)"
+    echo "✓ SafeClaude command not found (already removed)"
+fi
+
+if [ -d "$INSTALL_DIR/lib" ]; then
+    rm -rf "$INSTALL_DIR/lib"
+    echo "✓ Library files removed from $INSTALL_DIR/lib"
 fi
 echo ""
 
-# Note about deploy key
+# Check for persistent volumes
+echo "Checking for persistent volumes..."
+VOLUMES=$(docker volume ls --filter "name=safeclaude-" -q)
+if [ -n "$VOLUMES" ]; then
+    echo "Found persistent volumes:"
+    docker volume ls --filter "name=safeclaude-" --format "  {{.Name}}"
+    echo ""
+    read -p "Remove these volumes? [y/N] " -n 1 -r
+    echo ""
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        docker volume rm $VOLUMES
+        echo "✓ Volumes removed"
+    else
+        echo "⚠ Volumes preserved"
+    fi
+else
+    echo "✓ No persistent volumes found"
+fi
+echo ""
+
+# Note about project data
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "Note: Deploy key preserved at ~/.ssh/sandbox_deploy_key"
+echo "Note: Project data preserved at $SAFECLAUDE_DIR"
 echo ""
-echo "If you want to remove it:"
-echo "  rm ~/.ssh/sandbox_deploy_key*"
+echo "This includes:"
+echo "  - Project registry (projects.json)"
+echo "  - Per-project deploy keys (keys/)"
+echo "  - Configuration (config.json)"
 echo ""
-echo "Don't forget to remove the deploy key from GitHub:"
-echo "  Repository → Settings → Deploy keys → Delete 'claude-sandbox'"
+echo "To remove all SafeClaude data:"
+echo "  rm -rf $SAFECLAUDE_DIR"
+echo ""
+echo "Don't forget to remove deploy keys from GitHub repositories:"
+echo "  Repository → Settings → Deploy keys → Delete 'safeclaude-<project>'"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
