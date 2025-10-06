@@ -43,7 +43,7 @@ ${BLUE}RUN COMMANDS${NC}
   run <name> [OPTIONS]          Run Claude Code for a project
 
   Options for 'run':
-    --network                       Enable network access
+    --no-network                    Disable network access (enabled by default)
     --persist                       Persist Claude config between sessions
     --use-host-prompt=true/false    Copy CLAUDE.md (default: true)
     --use-host-agents=true/false    Copy agents/ (default: true)
@@ -76,7 +76,7 @@ ${BLUE}EXAMPLES${NC}
   safeclaude run myrepo
 
   # Run with network and persistence
-  safeclaude run myrepo --network --persist
+  safeclaude run myrepo --persist
 
   # Disable copying slash commands (e.g., if they depend on MCP tools)
   safeclaude run myrepo --use-host-commands=false
@@ -97,7 +97,7 @@ ${BLUE}SECURITY${NC}
   - Per-project deploy keys (isolated credentials)
   - GitHub branch protection enforcement (server-side)
   - Container isolation (ephemeral workspaces)
-  - Network isolation by default (--network to enable)
+  - Network enabled by default (required for git operations)
 
 EOF
     exit 0
@@ -205,34 +205,67 @@ cmd_setup() {
     echo ""
 
     # Check if project already exists
+    local reuse_key=false
     if project_exists "$name"; then
         echo -e "${YELLOW}Warning: Project '$name' already exists${NC}"
-        read -p "Overwrite? [y/N] " -n 1 -r
-        echo ""
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            echo "Aborted"
-            exit 0
+
+        # Check if existing deploy key can be reused
+        if key_exists "$name" && check_key_settings_match "$owner_repo" "$name"; then
+            echo "Existing deploy key found with matching settings"
+            read -p "Reuse existing deploy key? [Y/n] " -n 1 -r
+            echo ""
+            if [[ $REPLY =~ ^[Nn]$ ]]; then
+                echo "Will generate new deploy key and delete old one from GitHub"
+                if ! delete_github_key "$owner_repo" "$name"; then
+                    echo "Warning: Could not delete old deploy key from GitHub"
+                    echo "Continuing with new key generation..."
+                fi
+                delete_key "$name"
+            else
+                echo -e "${GREEN}✓ Reusing existing deploy key${NC}"
+                reuse_key=true
+            fi
+        else
+            read -p "Overwrite? [y/N] " -n 1 -r
+            echo ""
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                echo "Aborted"
+                exit 0
+            fi
+            # Delete old key from GitHub before creating new one
+            echo "Deleting old deploy key from GitHub..."
+            if ! delete_github_key "$owner_repo" "$name"; then
+                echo "Warning: Could not delete old deploy key from GitHub"
+                echo "Continuing with new key generation..."
+            fi
+            delete_key "$name"
         fi
         echo ""
     fi
 
-    # Generate deploy key
-    echo "Generating deploy key..."
-    local key_path=$(generate_deploy_key "$name")
-    echo -e "${GREEN}✓ Deploy key generated at $key_path${NC}"
-    echo ""
-
-    # Add deploy key to GitHub
-    echo "Adding deploy key to GitHub..."
-    if gh repo deploy-key add "$key_path.pub" \
-        --allow-write \
-        --title "safeclaude-$name" \
-        --repo "$owner_repo" 2>&1; then
-        echo -e "${GREEN}✓ Deploy key added to GitHub${NC}"
+    # Generate or reuse deploy key
+    if [ "$reuse_key" = true ]; then
+        local key_path=$(get_key_path "$name")
+        echo "Using existing deploy key at $key_path"
+        echo ""
     else
-        echo -e "${YELLOW}⚠ Deploy key may already exist (this is fine)${NC}"
+        echo "Generating deploy key..."
+        local key_path=$(generate_deploy_key "$name")
+        echo -e "${GREEN}✓ Deploy key generated at $key_path${NC}"
+        echo ""
+
+        # Add deploy key to GitHub
+        echo "Adding deploy key to GitHub..."
+        if gh repo deploy-key add "$key_path.pub" \
+            --allow-write \
+            --title "safeclaude-$name" \
+            --repo "$owner_repo" 2>&1; then
+            echo -e "${GREEN}✓ Deploy key added to GitHub${NC}"
+        else
+            echo -e "${YELLOW}⚠ Deploy key may already exist (this is fine)${NC}"
+        fi
+        echo ""
     fi
-    echo ""
 
     # Enable branch protection
     echo "Enabling branch protection on 'main'..."
@@ -298,11 +331,14 @@ cmd_remove() {
         exit 1
     fi
 
+    # Get owner/repo before removing from registry
+    local owner_repo=$(get_project_owner_repo "$name")
+
     echo -e "${YELLOW}Remove project '$name'?${NC}"
     echo "This will:"
     echo "  - Remove from registry"
     echo "  - Delete local deploy key"
-    echo "  - NOT remove deploy key from GitHub (do that manually)"
+    echo "  - Delete deploy key from GitHub"
     echo ""
     read -p "Continue? [y/N] " -n 1 -r
     echo ""
@@ -312,17 +348,22 @@ cmd_remove() {
         exit 0
     fi
 
-    # Delete deploy key
+    # Delete deploy key from GitHub
+    echo "Deleting deploy key from GitHub..."
+    if delete_github_key "$owner_repo" "$name"; then
+        echo -e "${GREEN}✓ Deploy key deleted from GitHub${NC}"
+    else
+        echo -e "${YELLOW}⚠ Could not delete deploy key from GitHub${NC}"
+        echo "Please delete it manually at: https://github.com/$owner_repo/settings/keys"
+    fi
+
+    # Delete local deploy key
     delete_key "$name"
 
     # Remove from registry
     remove_project "$name"
 
     echo -e "${GREEN}Project '$name' removed${NC}"
-    echo ""
-    echo "Note: Deploy key still exists on GitHub. Remove it manually:"
-    local owner_repo=$(get_project_owner_repo "$name")
-    echo "  https://github.com/$owner_repo/settings/keys"
 }
 
 # Run a project
@@ -478,7 +519,7 @@ cmd_start() {
     echo ""
 
     # Build and execute docker command in detached mode
-    build_docker_command "$name" "$repo_url" "$key_path" "$instructions_file" --detach --name "$agent_name" --network | execute_docker_command
+    build_docker_command "$name" "$repo_url" "$key_path" "$instructions_file" --detach --name "$agent_name" | execute_docker_command
 
     # Give container time to fail if it's going to
     sleep 2
