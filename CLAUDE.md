@@ -84,6 +84,7 @@ safeclaude remove test-project
 - **Foreground containers**: Auto-generated unique names using `date +%s` and `$$` to allow parallel sessions
 - **Background containers**: Require stable names via `--name` flag for attachment
 - **Name prefix**: Always prefixed with `safeclaude-` to identify project containers
+- **Startup validation**: Background containers checked after 2 seconds to detect early failures (`safeclaude:494-503`)
 
 ### Security Features
 
@@ -105,11 +106,13 @@ Repository URLs passed as environment variables (`REPO_URL`), not command argume
 
 ### API Key Management (`lib/registry.sh:194-258`)
 
-Two storage options:
-1. **Environment variable** (more secure): `export ANTHROPIC_API_KEY='sk-ant-...'`
-2. **Config file** (convenient): `~/.safeclaude/config.json`
+**API keys are optional.** Claude Code will use your subscription authentication automatically if no API key is set.
 
-Priority: env var checked first, then config file (`safeclaude:348-366`).
+If you want to use a specific API key (e.g., for a different account), you have two options:
+1. **Environment variable** (more secure): `export ANTHROPIC_API_KEY='sk-ant-...'`
+2. **Config file** (convenient): `safeclaude config set-api-key 'sk-ant-...'`
+
+Priority: env var checked first, then config file, then subscription auth (`safeclaude:347-356`).
 
 ### Host Configuration Copying (`lib/docker.sh:118-197`)
 
@@ -129,6 +132,7 @@ The system copies host `~/.claude/` config into containers with fine-grained con
 - Set defaults in config: `safeclaude config set use_host_commands false`
 - Override per-run: `safeclaude run project --use-host-commands=false`
 - Disable all: `safeclaude run project --no-host-config`
+- Boolean values accepted: `true`, `TRUE`, `yes`, `1` (normalized in `lib/docker.sh:59-90`)
 
 ## Common Workflows
 

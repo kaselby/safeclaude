@@ -146,7 +146,7 @@ build_docker_command() {
         docker_args+=("-v" "$instructions_file:/tmp/sandbox_instructions.md:ro")
     fi
 
-    # Pass Anthropic API key
+    # Pass Anthropic API key if set (optional - Claude Code can use subscription auth)
     if [ -n "$ANTHROPIC_API_KEY" ]; then
         docker_args+=("-e" "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY")
     fi

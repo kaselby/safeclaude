@@ -60,7 +60,7 @@ ${BLUE}CONFIGURATION COMMANDS${NC}
   config set <key> <value>      Set a config value
   config get [key]              Get config value(s)
   config list                   List all config
-  config set-api-key <key>      Store Anthropic API key
+  config set-api-key <key>      Store Anthropic API key (optional)
   config get-api-key            Show stored API key (masked)
   config remove-api-key         Remove API key from config
 
@@ -344,25 +344,15 @@ cmd_run() {
         exit 1
     fi
 
-    # Validate ANTHROPIC_API_KEY is set (check env var first, then config)
+    # Try to load API key from config if not in environment
+    # This is optional - Claude Code CLI can use subscription auth
     if [ -z "$ANTHROPIC_API_KEY" ]; then
-        # Try to load from config
         local stored_key=$(get_api_key)
         if [ -n "$stored_key" ]; then
             export ANTHROPIC_API_KEY="$stored_key"
             echo -e "${BLUE}Using API key from config${NC}"
-        else
-            echo -e "${RED}Error: ANTHROPIC_API_KEY not found${NC}"
-            echo ""
-            echo "Option 1 - Set as environment variable:"
-            echo "  export ANTHROPIC_API_KEY='your-key-here'"
-            echo "  # Add to ~/.bashrc or ~/.zshrc for persistence"
-            echo ""
-            echo "Option 2 - Store in SafeClaude config:"
-            echo "  safeclaude config set-api-key 'your-key-here'"
-            echo ""
-            exit 1
         fi
+        # If no API key, Claude Code will use subscription authentication
     fi
 
     # Get project details
@@ -450,25 +440,15 @@ cmd_start() {
         exit 1
     fi
 
-    # Validate ANTHROPIC_API_KEY is set (check env var first, then config)
+    # Try to load API key from config if not in environment
+    # This is optional - Claude Code CLI can use subscription auth
     if [ -z "$ANTHROPIC_API_KEY" ]; then
-        # Try to load from config
         local stored_key=$(get_api_key)
         if [ -n "$stored_key" ]; then
             export ANTHROPIC_API_KEY="$stored_key"
             echo -e "${BLUE}Using API key from config${NC}"
-        else
-            echo -e "${RED}Error: ANTHROPIC_API_KEY not found${NC}"
-            echo ""
-            echo "Option 1 - Set as environment variable:"
-            echo "  export ANTHROPIC_API_KEY='your-key-here'"
-            echo "  # Add to ~/.bashrc or ~/.zshrc for persistence"
-            echo ""
-            echo "Option 2 - Store in SafeClaude config:"
-            echo "  safeclaude config set-api-key 'your-key-here'"
-            echo ""
-            exit 1
         fi
+        # If no API key, Claude Code will use subscription authentication
     fi
 
     # Get project details
@@ -603,6 +583,9 @@ cmd_config() {
             echo "This is convenient but less secure than environment variables."
             echo "Any process running as your user can read this file."
             echo ""
+            echo "Note: API keys are optional if you have a Claude Code subscription."
+            echo "Claude Code will use your subscription auth automatically."
+            echo ""
             echo "Alternative (more secure):"
             echo "  export ANTHROPIC_API_KEY='$api_key'"
             echo "  # Add to ~/.zshrc or ~/.bashrc for persistence"
@@ -632,7 +615,9 @@ cmd_config() {
             if [ -z "$stored_key" ]; then
                 echo "No API key stored in config"
                 echo ""
-                echo "Set one with:"
+                echo "Note: API keys are optional if you have a Claude Code subscription."
+                echo ""
+                echo "To set an API key:"
                 echo "  safeclaude config set-api-key <key>"
                 echo ""
                 echo "Or use environment variable:"
