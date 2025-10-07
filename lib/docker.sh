@@ -8,7 +8,7 @@ IMAGE_NAME="safeclaude-$(whoami)/claude-sandbox"
 
 # Build docker run command
 # Usage: build_docker_command <project_name> <repo_url> <key_path> <instructions_file> <options>
-# Options: --network, --persist, --detach, --name <container_name>, --host-config, --no-host-config,
+# Options: --no-network, --persist, --detach, --name <container_name>, --host-config, --no-host-config,
 #          --use-host-prompt=, --use-host-agents=, --use-host-commands=
 build_docker_command() {
     local project_name="$1"
@@ -17,7 +17,7 @@ build_docker_command() {
     local instructions_file="$4"
     shift 4
 
-    local enable_network=false
+    local enable_network=true
     local enable_persist=false
     local detach=false
     local container_name=""
@@ -29,8 +29,8 @@ build_docker_command() {
     # Parse options
     while [[ $# -gt 0 ]]; do
         case $1 in
-            --network)
-                enable_network=true
+            --no-network)
+                enable_network=false
                 shift
                 ;;
             --persist)
@@ -130,8 +130,8 @@ build_docker_command() {
     # Container name
     docker_args+=("--name" "$container_name")
 
-    # Mount deploy key (read-only)
-    docker_args+=("-v" "$key_path:/root/.ssh/id_rsa:ro")
+    # Mount deploy key (read-only) for node user
+    docker_args+=("-v" "$key_path:/home/node/.ssh/id_ed25519:ro")
 
     # Mount host ~/.claude/ directory if host-config is enabled (read-only)
     # Copies: CLAUDE.md, agents/, commands/ (via startup script)
@@ -165,7 +165,7 @@ build_docker_command() {
         docker_args+=("-v" "safeclaude-${project_name}-history:/commandhistory")
     fi
 
-    # Network isolation (default: isolated)
+    # Network isolation (default: enabled, required for git operations)
     if [ "$enable_network" = false ]; then
         docker_args+=("--network" "none")
     fi
@@ -175,11 +175,14 @@ build_docker_command() {
 
     # Startup script (only for foreground)
     if [ "$detach" = false ]; then
-        docker_args+=("bash" "-c" "cat <<'STARTUP_SCRIPT' | bash
+        docker_args+=("bash" "-c" "
 set -e
 
+# Fix ownership of .claude directory (volume may be owned by root)
+sudo chown -R node:node /home/node/.claude 2>/dev/null || true
+
 # Add GitHub to known hosts
-ssh-keyscan github.com >> /root/.ssh/known_hosts 2>/dev/null
+ssh-keyscan github.com >> /home/node/.ssh/known_hosts 2>/dev/null
 
 # Copy host Claude config if available
 if [ -d /tmp/host_claude ]; then
@@ -238,15 +241,16 @@ echo ''
 
 # Launch Claude Code with bypassed permissions
 exec claude --dangerously-skip-permissions
-
-STARTUP_SCRIPT
 ")
     else
         # For background containers, include host config copy
         docker_args+=("bash" "-c" "
 set -e
 
-ssh-keyscan github.com >> /root/.ssh/known_hosts 2>/dev/null
+# Fix ownership of .claude directory (volume may be owned by root)
+sudo chown -R node:node /home/node/.claude 2>/dev/null || true
+
+ssh-keyscan github.com >> /home/node/.ssh/known_hosts 2>/dev/null
 
 # Copy host Claude config if available
 if [ -d /tmp/host_claude ]; then
@@ -284,17 +288,17 @@ cd repo && exec claude --dangerously-skip-permissions
 ")
     fi
 
-    # Export the array for use by caller
-    printf '%s\0' "${docker_args[@]}"
+    # Export the array to global variable for caller
+    SAFECLAUDE_DOCKER_ARGS=("${docker_args[@]}")
 }
 
-# Execute docker command from array
-# Usage: execute_docker_command <null-separated-args>
+# Execute docker command from global array
+# Usage: execute_docker_command (reads from SAFECLAUDE_DOCKER_ARGS)
 execute_docker_command() {
-    local -a docker_args
-    while IFS= read -r -d '' arg; do
-        docker_args+=("$arg")
-    done
+    if [ ${#SAFECLAUDE_DOCKER_ARGS[@]} -eq 0 ]; then
+        echo "Error: No docker arguments available" >&2
+        return 1
+    fi
 
-    docker "${docker_args[@]}"
+    docker "${SAFECLAUDE_DOCKER_ARGS[@]}"
 }

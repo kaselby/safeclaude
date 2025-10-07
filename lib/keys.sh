@@ -70,10 +70,21 @@ get_github_key_id() {
 
     # List all deploy keys and find exact match
     # GitHub API returns keys in format "ssh-ed25519 AAAAC3Nza..."
-    gh api "repos/$owner_repo/keys" --jq \
+    local api_output
+    if ! api_output=$(gh api "repos/$owner_repo/keys" 2>&1); then
+        return 1
+    fi
+
+    local key_id
+    if ! key_id=$(echo "$api_output" | jq -r \
         --arg type "$key_type" \
         --arg key "$key_content" \
-        '.[] | select(.key | startswith($type + " " + $key)) | .id' 2>&1 | head -n1
+        '.[] | select(.key | startswith($type + " " + $key)) | .id' 2>&1 | head -n1); then
+        echo "Error: Failed to parse GitHub API response" >&2
+        return 1
+    fi
+
+    echo "$key_id"
 }
 
 # Check if deploy key settings match current requirements

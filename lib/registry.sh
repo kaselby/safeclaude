@@ -232,6 +232,87 @@ get_api_key() {
     jq -r '.anthropic_api_key // ""' "$config_file"
 }
 
+# Check if OAuth token is expired or expiring soon
+# Usage: check_token_expiry [warn_days]
+# Returns: 0 if valid, 1 if expired, 2 if expiring soon
+check_token_expiry() {
+    local warn_days="${1:-7}"  # Default: warn 7 days before expiry
+
+    # Get token from environment or config
+    local token="$ANTHROPIC_API_KEY"
+    if [ -z "$token" ]; then
+        token=$(get_api_key)
+    fi
+
+    # If no token, skip check (might be using browser auth)
+    if [ -z "$token" ]; then
+        return 0
+    fi
+
+    # Only check OAuth tokens (start with sk-ant-oat)
+    if [[ ! "$token" =~ ^sk-ant-oat ]]; then
+        return 0
+    fi
+
+    # Parse JWT token to extract expiry
+    # OAuth tokens are JWTs: header.payload.signature
+    local payload=$(echo "$token" | cut -d'.' -f2)
+
+    # Decode base64 (handle URL-safe base64 with proper padding)
+    # Convert URL-safe chars and add padding based on length
+    payload=$(echo "$payload" | tr '_-' '/+')
+    local len=${#payload}
+    local padding=""
+    case $((len % 4)) in
+        2) padding="==" ;;
+        3) padding="=" ;;
+    esac
+    local decoded=$(echo "${payload}${padding}" | base64 -d 2>/dev/null)
+
+    if [ -z "$decoded" ]; then
+        # Can't decode, skip check
+        return 0
+    fi
+
+    # Extract expiry timestamp
+    local exp=$(echo "$decoded" | jq -r '.exp // empty' 2>/dev/null)
+
+    if [ -z "$exp" ]; then
+        # No expiry field, skip check
+        return 0
+    fi
+
+    # Validate exp is a positive integer (JWT allows floats, truncate them)
+    exp=${exp%.*}  # Remove decimal part if present
+    if ! [[ "$exp" =~ ^[0-9]+$ ]]; then
+        # Not a valid integer, skip check
+        return 0
+    fi
+
+    local now=$(date +%s)
+    local warn_threshold=$((now + warn_days * 86400))
+
+    if [ "$exp" -lt "$now" ]; then
+        echo "Error: OAuth token has expired" >&2
+        echo "" >&2
+        echo "Generate a new token with:" >&2
+        echo "  claude setup-token" >&2
+        echo "" >&2
+        echo "Then store it with:" >&2
+        echo "  safeclaude config set-api-key 'sk-ant-oat...'" >&2
+        echo "" >&2
+        return 1
+    elif [ "$exp" -lt "$warn_threshold" ]; then
+        local days_left=$(( (exp - now) / 86400 ))
+        echo "Warning: OAuth token expires in $days_left days" >&2
+        echo "Generate a new token soon with: claude setup-token" >&2
+        echo "" >&2
+        return 2
+    fi
+
+    return 0
+}
+
 # Remove API key from config
 # Usage: remove_api_key
 remove_api_key() {

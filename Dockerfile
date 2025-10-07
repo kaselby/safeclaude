@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y \
     git \
     openssh-client \
     curl \
+    sudo \
     && rm -rf /var/lib/apt/lists/*
 
 # Install GitHub CLI
@@ -19,8 +20,8 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
     && apt-get install -y gh \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Claude Code CLI
-RUN curl -fsSL https://cli.anthropic.com/install.sh | sh
+# Install Claude Code CLI globally via npm
+RUN npm install -g @anthropic-ai/claude-code
 
 # Accept git config as build arguments
 ARG GIT_USER_NAME
@@ -33,8 +34,17 @@ RUN git config --global user.name "${GIT_USER_NAME}" && \
 # Create workspace directory
 WORKDIR /workspace
 
-# Set up SSH directory for deploy key
-RUN mkdir -p /root/.ssh && chmod 700 /root/.ssh
+# Set up SSH directory for node user (non-root)
+RUN mkdir -p /home/node/.ssh && chmod 700 /home/node/.ssh && chown -R node:node /home/node/.ssh
+
+# Set up workspace for node user
+RUN chown -R node:node /workspace
+
+# Allow node user to chown the .claude directory (for volume ownership fix)
+RUN echo "node ALL=(root) NOPASSWD: /bin/chown -R node\\:node /home/node/.claude" > /etc/sudoers.d/node-claude
+
+# Switch to non-root user (required for --dangerously-skip-permissions)
+USER node
 
 # Default to bash shell
 CMD ["/bin/bash"]

@@ -396,6 +396,15 @@ cmd_run() {
         # If no API key, Claude Code will use subscription authentication
     fi
 
+    # Check if OAuth token is expired or expiring soon
+    check_token_expiry
+    local expiry_status=$?
+    if [ $expiry_status -eq 1 ]; then
+        # Token is expired - block execution
+        exit 1
+    fi
+    # Status 2 (warning) or 0 (valid) - continue
+
     # Get project details
     local repo_url=$(get_project_url "$name")
     local key_path=$(get_project_key_path "$name")
@@ -445,7 +454,8 @@ cmd_run() {
     echo ""
 
     # Build and execute docker command (config args + user args)
-    build_docker_command "$name" "$repo_url" "$key_path" "$instructions_file" "${config_args[@]}" "$@" | execute_docker_command
+    build_docker_command "$name" "$repo_url" "$key_path" "$instructions_file" "${config_args[@]}" "$@"
+    execute_docker_command
 
     echo ""
     echo -e "${GREEN}Sandbox session ended${NC}"
@@ -492,6 +502,15 @@ cmd_start() {
         # If no API key, Claude Code will use subscription authentication
     fi
 
+    # Check if OAuth token is expired or expiring soon
+    check_token_expiry
+    local expiry_status=$?
+    if [ $expiry_status -eq 1 ]; then
+        # Token is expired - block execution
+        exit 1
+    fi
+    # Status 2 (warning) or 0 (valid) - continue
+
     # Get project details
     local repo_url=$(get_project_url "$name")
     local key_path=$(get_project_key_path "$name")
@@ -519,7 +538,8 @@ cmd_start() {
     echo ""
 
     # Build and execute docker command in detached mode
-    build_docker_command "$name" "$repo_url" "$key_path" "$instructions_file" --detach --name "$agent_name" | execute_docker_command
+    build_docker_command "$name" "$repo_url" "$key_path" "$instructions_file" --detach --name "$agent_name"
+    execute_docker_command
 
     # Give container time to fail if it's going to
     sleep 2
