@@ -233,7 +233,7 @@ The startup script is embedded in `lib/docker.sh:160-224` (foreground) and `lib/
 1. Check container logs: `docker logs <container-name>`
 2. Look for "Failed to clone repository" errors
 3. Verify deploy key exists and has correct permissions
-4. Test network connectivity with `--network` flag
+4. Network is enabled by default for git operations
 
 ## Security Considerations
 
