@@ -134,6 +134,42 @@ The system copies host `~/.claude/` config into containers with fine-grained con
 - Disable all: `safeclaude run project --no-host-config`
 - Boolean values accepted: `true`, `TRUE`, `yes`, `1` (normalized in `lib/docker.sh:59-90`)
 
+### Custom File/Directory Mounting (`lib/docker.sh:156-197`)
+
+You can mount local files or directories into the container using `--mount` flags:
+
+**Format**: `--mount <host-path>:<container-path>[:<mode>]`
+
+**Mount modes**:
+- `ro` (read-only): Default, provides safe access to reference files
+- `rw` (read-write): Allows modifications (use with caution)
+
+**Features**:
+- Tilde expansion supported in host paths (`~/docs/spec.md`)
+- Host path validation (must exist before container starts)
+- Container path validation (must be absolute)
+- Multiple mounts supported (repeat `--mount` flag)
+
+**Examples**:
+```bash
+# Mount a design document as read-only
+safeclaude run myproject --mount ~/docs/design.md:/workspace/design.md
+
+# Mount data directory with write access
+safeclaude run myproject --mount ~/data:/workspace/data:rw
+
+# Multiple mounts
+safeclaude run myproject \
+  --mount ~/specs:/workspace/specs:ro \
+  --mount ~/output:/workspace/output:rw
+```
+
+**Security notes**:
+- Default read-only mode prevents accidental modification of host files
+- Mounted files are accessible to Claude inside the container
+- Use absolute container paths (e.g., `/workspace/file.md`, not `./file.md`)
+- Validation happens in `lib/docker.sh:156-197`
+
 ## Common Workflows
 
 ### Adding New Commands

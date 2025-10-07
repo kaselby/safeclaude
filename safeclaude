@@ -48,6 +48,9 @@ ${BLUE}RUN COMMANDS${NC}
     --use-host-prompt=true/false    Copy CLAUDE.md (default: true)
     --use-host-agents=true/false    Copy agents/ (default: true)
     --use-host-commands=true/false  Copy commands/ (default: true)
+    --mount <host-path>:<container-path>[:<ro|rw>]
+                                    Mount local file or directory (can be repeated)
+                                    Default mode is read-only (ro)
 
 ${BLUE}BACKGROUND COMMANDS${NC}
   start <name> <agent-name>     Start Claude in background
@@ -86,6 +89,14 @@ ${BLUE}EXAMPLES${NC}
 
   # Run without copying host config
   safeclaude run myrepo --no-host-config
+
+  # Mount a local file for reference
+  safeclaude run myrepo --mount /path/to/design.md:/workspace/design.md
+
+  # Mount multiple files/directories
+  safeclaude run myrepo \\
+    --mount ~/docs/spec.md:/workspace/spec.md:ro \\
+    --mount ~/data:/workspace/data:rw
 
   # Start in background
   safeclaude start myrepo agent-1

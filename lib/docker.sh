@@ -9,7 +9,7 @@ IMAGE_NAME="safeclaude-$(whoami)/claude-sandbox"
 # Build docker run command
 # Usage: build_docker_command <project_name> <repo_url> <key_path> <instructions_file> <options>
 # Options: --no-network, --persist, --detach, --name <container_name>, --host-config, --no-host-config,
-#          --use-host-prompt=, --use-host-agents=, --use-host-commands=
+#          --use-host-prompt=, --use-host-agents=, --use-host-commands=, --mount <host>:<container>[:<mode>]
 build_docker_command() {
     local project_name="$1"
     local repo_url="$2"
@@ -25,6 +25,9 @@ build_docker_command() {
     local copy_prompt=true
     local copy_agents=true
     local copy_commands=true
+
+    # Array to store custom mount specifications
+    declare -a custom_mounts=()
 
     # Parse options
     while [[ $# -gt 0 ]]; do
@@ -55,6 +58,10 @@ build_docker_command() {
                 copy_agents=false
                 copy_commands=false
                 shift
+                ;;
+            --mount)
+                custom_mounts+=("$2")
+                shift 2
                 ;;
             --use-host-prompt=*)
                 local value="${1#*=}"
@@ -145,6 +152,49 @@ build_docker_command() {
     if [ -f "$instructions_file" ]; then
         docker_args+=("-v" "$instructions_file:/tmp/sandbox_instructions.md:ro")
     fi
+
+    # Process custom mounts
+    for mount_spec in "${custom_mounts[@]}"; do
+        # Parse mount specification: host_path:container_path[:mode]
+        local host_path container_path mount_mode
+
+        # Split on colons
+        IFS=':' read -ra mount_parts <<< "$mount_spec"
+
+        if [ ${#mount_parts[@]} -lt 2 ]; then
+            echo "Error: Invalid mount specification '$mount_spec'" >&2
+            echo "Format: <host-path>:<container-path>[:<ro|rw>]" >&2
+            return 1
+        fi
+
+        host_path="${mount_parts[0]}"
+        container_path="${mount_parts[1]}"
+        mount_mode="${mount_parts[2]:-ro}"  # Default to read-only
+
+        # Expand tilde in host path
+        host_path="${host_path/#\~/$HOME}"
+
+        # Validate host path exists
+        if [ ! -e "$host_path" ]; then
+            echo "Error: Mount source does not exist: $host_path" >&2
+            return 1
+        fi
+
+        # Validate mount mode
+        if [[ "$mount_mode" != "ro" ]] && [[ "$mount_mode" != "rw" ]]; then
+            echo "Error: Invalid mount mode '$mount_mode' (must be 'ro' or 'rw')" >&2
+            return 1
+        fi
+
+        # Validate container path (must be absolute)
+        if [[ ! "$container_path" =~ ^/ ]]; then
+            echo "Error: Container path must be absolute: $container_path" >&2
+            return 1
+        fi
+
+        # Add mount to docker args
+        docker_args+=("-v" "$host_path:$container_path:$mount_mode")
+    done
 
     # Pass Anthropic API key if set (optional - Claude Code can use subscription auth)
     if [ -n "$ANTHROPIC_API_KEY" ]; then
