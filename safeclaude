@@ -68,6 +68,11 @@ ${BLUE}CONFIGURATION COMMANDS${NC}
   config get-api-key            Show stored API key (masked)
   config remove-api-key         Remove API key from config
 
+${BLUE}RECOVERY COMMANDS${NC}
+  recover <project> <id>        Recover commits from a crashed session
+  recover list <project>        List available recovery bundles
+  recover clear <project> [id]  Clear recovery bundles
+
 ${BLUE}UTILITY COMMANDS${NC}
   --help, help                  Show this help message
   --version                     Show version information
@@ -104,6 +109,12 @@ ${BLUE}EXAMPLES${NC}
 
   # Attach to it
   safeclaude attach agent-1
+
+  # List recovery bundles (after a crash)
+  safeclaude recover list myrepo
+
+  # Recover commits from a crashed session
+  safeclaude recover myrepo abc123def456
 
 ${BLUE}SECURITY${NC}
   - Per-project deploy keys (isolated credentials)
@@ -1080,6 +1091,305 @@ cmd_config() {
     esac
 }
 
+# Recovery management
+cmd_recover() {
+    local subcommand="$1"
+
+    # Validate project name if provided (defense in depth against manually edited projects.json)
+    if [ -n "$1" ] && [[ "$1" != "list" ]] && [[ "$1" != "clear" ]]; then
+        local potential_project="$1"
+        if [[ ! "$potential_project" =~ ^[a-zA-Z0-9_-]+$ ]] || [ ${#potential_project} -gt 64 ]; then
+            echo -e "${RED}Error: Invalid project name${NC}"
+            echo "Project names must contain only letters, numbers, hyphens, and underscores (max 64 chars)"
+            exit 1
+        fi
+    fi
+
+    # If first arg looks like a project name (not a subcommand), treat as "apply"
+    if [ -n "$subcommand" ] && [[ "$subcommand" != "list" ]] && [[ "$subcommand" != "clear" ]]; then
+        # Direct recovery: safeclaude recover <project> <container-id>
+        local project="$subcommand"
+        local container_id="$2"
+
+        if [ -z "$container_id" ]; then
+            echo -e "${RED}Error: Container ID required${NC}"
+            echo "Usage: safeclaude recover <project> <container-id>"
+            echo ""
+            echo "To list available bundles:"
+            echo "  safeclaude recover list <project>"
+            exit 1
+        fi
+
+        # Call the apply logic directly
+        subcommand="apply"
+    else
+        shift || true
+    fi
+
+    case "$subcommand" in
+        list)
+            local project="$1"
+
+            if [ -z "$project" ]; then
+                echo -e "${RED}Error: Project name required${NC}"
+                echo "Usage: safeclaude recover list <project>"
+                exit 1
+            fi
+
+            if ! project_exists "$project"; then
+                echo -e "${RED}Error: Project '$project' not found${NC}"
+                exit 1
+            fi
+
+            local recovery_dir="$SAFECLAUDE_DIR/recovery/$project"
+
+            if [ ! -d "$recovery_dir" ]; then
+                echo "No recovery bundles found for '$project'"
+                exit 0
+            fi
+
+            # Find all JSON metadata files
+            local metadata_files=()
+            while IFS= read -r -d '' meta_file; do
+                metadata_files+=("$meta_file")
+            done < <(find "$recovery_dir" -maxdepth 1 -type f -name '*.json' -print0 2>/dev/null | sort -z -r)
+
+            if [ ${#metadata_files[@]} -eq 0 ]; then
+                echo "No recovery bundles found for '$project'"
+                exit 0
+            fi
+
+            echo -e "${GREEN}Recovery Bundles for '$project'${NC}"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo ""
+
+            for meta_file in "${metadata_files[@]}"; do
+                local container_id=$(jq -r '.container_id // "unknown"' "$meta_file" 2>/dev/null)
+                local session_start=$(jq -r '.session_start // "unknown"' "$meta_file" 2>/dev/null)
+                local last_update=$(jq -r '.last_update // "unknown"' "$meta_file" 2>/dev/null)
+                local commits=$(jq -r '.commits // 0' "$meta_file" 2>/dev/null)
+                local branches=$(jq -r '.branches // [] | join(", ")' "$meta_file" 2>/dev/null)
+                local last_commit=$(jq -r '.last_commit // "No commits"' "$meta_file" 2>/dev/null)
+
+                echo -e "  ${BLUE}Container:${NC} $container_id"
+                echo -e "  ${BLUE}Session:${NC}   $session_start"
+                echo -e "  ${BLUE}Updated:${NC}   $last_update"
+                echo -e "  ${BLUE}Commits:${NC}   $commits"
+                echo -e "  ${BLUE}Branches:${NC}  $branches"
+                echo -e "  ${BLUE}Last:${NC}      ${last_commit:0:70}"
+                echo ""
+            done
+
+            echo "To recover from a bundle, run:"
+            echo "  safeclaude recover <project> <container-id>"
+            ;;
+
+        apply)
+            local project="$1"
+            local container_id="$2"
+
+            if [ -z "$project" ] || [ -z "$container_id" ]; then
+                echo -e "${RED}Error: Project name and container ID required${NC}"
+                echo "Usage: safeclaude recover <project> <container-id>"
+                exit 1
+            fi
+
+            # Validate container_id format (security: prevent path traversal)
+            if [[ ! "$container_id" =~ ^[a-z0-9-]+$ ]]; then
+                echo -e "${RED}Error: Invalid container ID format${NC}"
+                echo "Container ID must contain only lowercase letters, numbers, and hyphens"
+                exit 1
+            fi
+
+            if ! project_exists "$project"; then
+                echo -e "${RED}Error: Project '$project' not found${NC}"
+                exit 1
+            fi
+
+            local recovery_dir="$SAFECLAUDE_DIR/recovery/$project"
+            local bundle_file="$recovery_dir/${container_id}.bundle"
+            local meta_file="$recovery_dir/${container_id}.json"
+
+            if [ ! -f "$bundle_file" ]; then
+                echo -e "${RED}Error: Bundle not found: $bundle_file${NC}"
+                echo ""
+                echo "Available bundles:"
+                cmd_recover list "$project"
+                exit 1
+            fi
+
+            # Verify we're in a git repository
+            if ! git rev-parse --git-dir > /dev/null 2>&1; then
+                echo -e "${RED}Error: Not in a git repository${NC}"
+                echo "Please cd to your project repository and try again"
+                exit 1
+            fi
+
+            # Verify remote URL matches project
+            local expected_url=$(get_project_url "$project")
+            local current_remote=$(git config --get remote.origin.url 2>/dev/null || echo "")
+
+            if [ "$current_remote" != "$expected_url" ]; then
+                echo -e "${RED}Error: Repository mismatch${NC}"
+                echo "Current repository: $current_remote"
+                echo "Expected: $expected_url"
+                echo ""
+                echo "Please cd to the correct repository"
+                exit 1
+            fi
+
+            # Show bundle info
+            if [ -f "$meta_file" ]; then
+                echo -e "${GREEN}Applying Recovery Bundle${NC}"
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                echo ""
+                local session_start=$(jq -r '.session_start // "unknown"' "$meta_file" 2>/dev/null)
+                local commits=$(jq -r '.commits // 0' "$meta_file" 2>/dev/null)
+                local branches=$(jq -r '.branches // [] | join(", ")' "$meta_file" 2>/dev/null)
+                local last_commit=$(jq -r '.last_commit // ""' "$meta_file" 2>/dev/null)
+
+                echo "Session:  $session_start"
+                echo "Commits:  $commits"
+                echo "Branches: $branches"
+                echo "Last:     $last_commit"
+                echo ""
+            fi
+
+            # Check for uncommitted changes
+            if ! git diff-index --quiet HEAD -- 2>/dev/null; then
+                echo -e "${YELLOW}Warning: You have uncommitted changes${NC}"
+                echo ""
+                read -p "Continue anyway? [y/N] " -n 1 -r
+                echo ""
+                if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                    echo "Cancelled"
+                    exit 0
+                fi
+                echo ""
+            fi
+
+            # Verify bundle integrity before recovery
+            echo "Verifying bundle integrity..."
+            if ! git bundle verify "$bundle_file" >/dev/null 2>&1; then
+                echo -e "${RED}Error: Bundle verification failed${NC}"
+                echo "The bundle file may be corrupted or incomplete."
+                echo ""
+                echo "Bundle: $bundle_file"
+                exit 1
+            fi
+            echo -e "${GREEN}✓ Bundle verification passed${NC}"
+            echo ""
+
+            # Fetch from bundle
+            echo "Fetching commits from bundle..."
+            if ! git fetch "$bundle_file" 'refs/*:refs/recovery/*' 2>&1; then
+                echo -e "${RED}Error: Failed to fetch from bundle${NC}"
+                exit 1
+            fi
+
+            echo -e "${GREEN}✓ Commits fetched successfully${NC}"
+            echo ""
+            echo "Branches are now available under refs/recovery/"
+            echo ""
+            echo "To see what was recovered:"
+            echo "  git log recovery/<branch-name>"
+            echo ""
+            echo "To merge a recovered branch:"
+            echo "  git merge recovery/<branch-name>"
+            echo ""
+            echo "To checkout a recovered branch:"
+            echo "  git checkout -b <new-branch> recovery/<branch-name>"
+            ;;
+
+        clear)
+            local project="$1"
+            local container_id="$2"
+
+            if [ -z "$project" ]; then
+                echo -e "${RED}Error: Project name required${NC}"
+                echo "Usage: safeclaude recover clear <project> [container-id]"
+                echo ""
+                echo "Examples:"
+                echo "  safeclaude recover clear myproject                 # Clear all bundles"
+                echo "  safeclaude recover clear myproject abc123def456    # Clear specific bundle"
+                exit 1
+            fi
+
+            if ! project_exists "$project"; then
+                echo -e "${RED}Error: Project '$project' not found${NC}"
+                exit 1
+            fi
+
+            local recovery_dir="$SAFECLAUDE_DIR/recovery/$project"
+
+            if [ ! -d "$recovery_dir" ]; then
+                echo "No recovery bundles found for '$project'"
+                exit 0
+            fi
+
+            if [ -n "$container_id" ]; then
+                # Validate container_id format (security: prevent path traversal)
+                if [[ ! "$container_id" =~ ^[a-z0-9-]+$ ]]; then
+                    echo -e "${RED}Error: Invalid container ID format${NC}"
+                    echo "Container ID must contain only lowercase letters, numbers, and hyphens"
+                    exit 1
+                fi
+
+                # Clear specific bundle
+                local bundle_file="$recovery_dir/${container_id}.bundle"
+                local meta_file="$recovery_dir/${container_id}.json"
+
+                if [ ! -f "$bundle_file" ] && [ ! -f "$meta_file" ]; then
+                    echo -e "${RED}Error: Bundle not found for container $container_id${NC}"
+                    exit 1
+                fi
+
+                echo -e "${YELLOW}Remove recovery bundle for container '$container_id'?${NC}"
+                read -p "Continue? [y/N] " -n 1 -r
+                echo ""
+
+                if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                    echo "Cancelled"
+                    exit 0
+                fi
+
+                rm -f "$bundle_file" "$meta_file"
+                echo -e "${GREEN}✓ Bundle removed${NC}"
+            else
+                # Clear all bundles
+                local bundle_count=$(find "$recovery_dir" -maxdepth 1 -type f -name '*.bundle' 2>/dev/null | wc -l)
+
+                if [ "$bundle_count" -eq 0 ]; then
+                    echo "No recovery bundles found for '$project'"
+                    exit 0
+                fi
+
+                echo -e "${YELLOW}Remove all $bundle_count recovery bundles for '$project'?${NC}"
+                read -p "Continue? [y/N] " -n 1 -r
+                echo ""
+
+                if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                    echo "Cancelled"
+                    exit 0
+                fi
+
+                rm -f "$recovery_dir"/*.bundle "$recovery_dir"/*.json
+                echo -e "${GREEN}✓ All bundles removed${NC}"
+            fi
+            ;;
+
+        *)
+            echo -e "${RED}Error: Unknown recover subcommand '$subcommand'${NC}"
+            echo ""
+            echo "Available commands:"
+            echo "  safeclaude recover <project> <container-id>       Recover commits from bundle"
+            echo "  safeclaude recover list <project>                 List recovery bundles"
+            echo "  safeclaude recover clear <project> [container-id] Clear recovery bundles"
+            exit 1
+            ;;
+    esac
+}
+
 # Main command dispatcher
 main() {
     # Check dependencies
@@ -1127,6 +1437,9 @@ main() {
             ;;
         config)
             cmd_config "$@"
+            ;;
+        recover)
+            cmd_recover "$@"
             ;;
         --help|help|-h)
             usage

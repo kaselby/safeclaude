@@ -144,6 +144,11 @@ build_docker_command() {
     # Mount deploy key (read-only) for node user
     docker_args+=("-v" "$key_path:/home/node/.ssh/id_ed25519:ro")
 
+    # Mount recovery directory for git bundle backups (read-write)
+    local recovery_dir="$HOME/.safeclaude/recovery/$project_name"
+    mkdir -p "$recovery_dir"
+    docker_args+=("-v" "$recovery_dir:/recovery:rw")
+
     # Mount host ~/.claude/ directory if host-config is enabled (read-only)
     # Copies: CLAUDE.md, agents/, commands/ (via startup script)
     # Skips: config.json, mcp_config.json (security/compatibility reasons)
@@ -285,8 +290,87 @@ fi
 
 cd repo
 
+# Set up recovery system
+CONTAINER_ID=\$(hostname | cut -c1-12)
+
+# Validate container ID format (security: prevent path traversal)
+if [[ ! \"\$CONTAINER_ID\" =~ ^[a-z0-9-]+$ ]]; then
+    echo 'ERROR: Invalid container ID format' >&2
+    exit 1
+fi
+
+SESSION_START_TIME=\$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+# Record session start ref and timestamp (handle empty repos, container-specific)
+git rev-parse HEAD 2>/dev/null > /recovery/.\$CONTAINER_ID.session-start-ref || echo '0000000000000000000000000000000000000000' > /recovery/.\$CONTAINER_ID.session-start-ref
+echo \"\$SESSION_START_TIME\" > /recovery/.\$CONTAINER_ID.session-start-time
+
+# Install post-commit hook for automatic bundle creation
+cat > .git/hooks/post-commit << 'HOOK_EOF'
+#!/bin/sh
+# SafeClaude automatic recovery bundle creation
+
+CONTAINER_ID=\$(hostname | cut -c1-12)
+
+# Validate container ID (security: prevent path traversal)
+if [ -z \"\$CONTAINER_ID\" ] || ! echo \"\$CONTAINER_ID\" | grep -qE '^[a-z0-9-]+$'; then
+    echo 'ERROR: Invalid container ID' >&2
+    exit 1
+fi
+
+SESSION_START=\$(cat /recovery/.\$CONTAINER_ID.session-start-ref 2>/dev/null || echo HEAD)
+SESSION_START_TIME=\$(cat /recovery/.\$CONTAINER_ID.session-start-time 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)
+
+# Create bundle with atomic write (security: prevent corruption on crash)
+BUNDLE_TEMP=\"/recovery/.\${CONTAINER_ID}.bundle.tmp\"
+BUNDLE_FINAL=\"/recovery/\${CONTAINER_ID}.bundle\"
+
+if git bundle create \"\$BUNDLE_TEMP\" \${SESSION_START}..HEAD 2>/tmp/bundle-error.log; then
+    mv -f \"\$BUNDLE_TEMP\" \"\$BUNDLE_FINAL\"
+else
+    # Log failure to container-specific error log
+    {
+        echo \"[\$(date)] Bundle creation failed\"
+        cat /tmp/bundle-error.log 2>/dev/null || echo '(error details unavailable)'
+    } >> /recovery/.\${CONTAINER_ID}.errors 2>/dev/null || true
+    rm -f \"\$BUNDLE_TEMP\" 2>/dev/null || true
+    exit 0
+fi
+
+# Count commits in this session
+COMMIT_COUNT=\$(git rev-list --count \${SESSION_START}..HEAD 2>/dev/null || echo 0)
+
+# Get branches containing HEAD
+BRANCHES=\$(git branch --contains HEAD --format='%(refname:short)' | jq -R -s -c 'split(\"\\n\") | map(select(length > 0))' 2>/dev/null || echo '[]')
+
+# Get last commit message
+LAST_COMMIT=\$(git log -1 --pretty=format:%s 2>/dev/null || echo '')
+
+# Create/update metadata JSON using jq (security: prevent injection in commit messages)
+jq -n \\
+    --arg cid \"\$CONTAINER_ID\" \\
+    --arg start \"\$SESSION_START_TIME\" \\
+    --arg update \"\$(date -u +%Y-%m-%dT%H:%M:%SZ)\" \\
+    --argjson count \"\$COMMIT_COUNT\" \\
+    --argjson branches \"\$BRANCHES\" \\
+    --arg last \"\$LAST_COMMIT\" \\
+    '{
+      container_id: \$cid,
+      session_start: \$start,
+      last_update: \$update,
+      commits: \$count,
+      branches: \$branches,
+      last_commit: \$last
+    }' > \"/recovery/\${CONTAINER_ID}.json\" 2>/dev/null || true
+
+chmod 644 \"/recovery/\${CONTAINER_ID}.json\" 2>/dev/null || true
+HOOK_EOF
+
+chmod +x .git/hooks/post-commit
+
 echo ''
 echo 'Repository cloned successfully!'
+echo 'Recovery system enabled (bundles saved to ~/.safeclaude/recovery)'
 echo ''
 echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 echo 'Starting Claude Code with bypassed permissions...'
@@ -360,7 +444,80 @@ if ! git clone \"\$REPO_URL\" repo 2>&1; then
     exit 1
 fi
 
-cd repo && exec claude --dangerously-skip-permissions
+cd repo
+
+# Set up recovery system
+CONTAINER_ID=\$(hostname | cut -c1-12)
+
+# Validate container ID format (security: prevent path traversal)
+if [[ ! \"\$CONTAINER_ID\" =~ ^[a-z0-9-]+$ ]]; then
+    echo 'ERROR: Invalid container ID format' >&2
+    exit 1
+fi
+
+SESSION_START_TIME=\$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+# Record session start ref and timestamp (handle empty repos, container-specific)
+git rev-parse HEAD 2>/dev/null > /recovery/.\$CONTAINER_ID.session-start-ref || echo '0000000000000000000000000000000000000000' > /recovery/.\$CONTAINER_ID.session-start-ref
+echo \"\$SESSION_START_TIME\" > /recovery/.\$CONTAINER_ID.session-start-time
+
+# Install post-commit hook
+cat > .git/hooks/post-commit << 'HOOK_EOF'
+#!/bin/sh
+CONTAINER_ID=\$(hostname | cut -c1-12)
+
+# Validate container ID (security: prevent path traversal)
+if [ -z \"\$CONTAINER_ID\" ] || ! echo \"\$CONTAINER_ID\" | grep -qE '^[a-z0-9-]+$'; then
+    echo 'ERROR: Invalid container ID' >&2
+    exit 1
+fi
+
+SESSION_START=\$(cat /recovery/.\$CONTAINER_ID.session-start-ref 2>/dev/null || echo HEAD)
+SESSION_START_TIME=\$(cat /recovery/.\$CONTAINER_ID.session-start-time 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)
+
+# Create bundle with atomic write (security: prevent corruption on crash)
+BUNDLE_TEMP=\"/recovery/.\${CONTAINER_ID}.bundle.tmp\"
+BUNDLE_FINAL=\"/recovery/\${CONTAINER_ID}.bundle\"
+
+if git bundle create \"\$BUNDLE_TEMP\" \${SESSION_START}..HEAD 2>/tmp/bundle-error.log; then
+    mv -f \"\$BUNDLE_TEMP\" \"\$BUNDLE_FINAL\"
+else
+    # Log failure to container-specific error log
+    {
+        echo \"[\$(date)] Bundle creation failed\"
+        cat /tmp/bundle-error.log 2>/dev/null || echo '(error details unavailable)'
+    } >> /recovery/.\${CONTAINER_ID}.errors 2>/dev/null || true
+    rm -f \"\$BUNDLE_TEMP\" 2>/dev/null || true
+    exit 0
+fi
+
+COMMIT_COUNT=\$(git rev-list --count \${SESSION_START}..HEAD 2>/dev/null || echo 0)
+BRANCHES=\$(git branch --contains HEAD --format='%(refname:short)' | jq -R -s -c 'split(\"\\n\") | map(select(length > 0))' 2>/dev/null || echo '[]')
+LAST_COMMIT=\$(git log -1 --pretty=format:%s 2>/dev/null || echo '')
+
+# Create/update metadata JSON using jq (security: prevent injection in commit messages)
+jq -n \\
+    --arg cid \"\$CONTAINER_ID\" \\
+    --arg start \"\$SESSION_START_TIME\" \\
+    --arg update \"\$(date -u +%Y-%m-%dT%H:%M:%SZ)\" \\
+    --argjson count \"\$COMMIT_COUNT\" \\
+    --argjson branches \"\$BRANCHES\" \\
+    --arg last \"\$LAST_COMMIT\" \\
+    '{
+      container_id: \$cid,
+      session_start: \$start,
+      last_update: \$update,
+      commits: \$count,
+      branches: \$branches,
+      last_commit: \$last
+    }' > \"/recovery/\${CONTAINER_ID}.json\" 2>/dev/null || true
+
+chmod 644 \"/recovery/\${CONTAINER_ID}.json\" 2>/dev/null || true
+HOOK_EOF
+
+chmod +x .git/hooks/post-commit
+
+exec claude --dangerously-skip-permissions
 ")
     fi
 

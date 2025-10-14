@@ -16,6 +16,9 @@ init_safeclaude_dir() {
     mkdir -p "$SAFECLAUDE_DIR/transfer"
     chmod 700 "$SAFECLAUDE_DIR/transfer"
 
+    # Create recovery directory for git bundles
+    mkdir -p "$SAFECLAUDE_DIR/recovery"
+
     # Create empty projects.json if it doesn't exist
     if [ ! -f "$PROJECTS_FILE" ]; then
         echo '{}' > "$PROJECTS_FILE"
