@@ -37,6 +37,46 @@ deploy key          branch protection
 (per-project)       (server-side)
 ```
 
+### Commit Recovery System
+
+SafeClaude automatically backs up all commits made within container sessions to prevent data loss from crashes or container failures.
+
+**How it works:**
+1. On container startup, a git post-commit hook is installed in `/workspace/.git/hooks/post-commit`
+2. After each commit, the hook creates a git bundle containing all commits since session start
+3. Bundle is saved to `~/.safeclaude/recovery/<project>/<container-id>.bundle` on the host
+4. Metadata JSON file tracks session info, commit count, branches, and last commit message
+5. Bundles persist even if the container crashes or is killed
+
+**Recovery workflow:**
+```bash
+# List available recovery bundles
+safeclaude recovery list myproject
+
+# Apply a specific bundle to your working directory
+cd /path/to/myproject
+safeclaude recovery apply myproject <container-id>
+
+# Recovered commits are fetched as refs/recovery/<branch>
+git log recovery/feature-branch
+git merge recovery/feature-branch
+
+# Clear old bundles
+safeclaude recovery clear myproject
+```
+
+**Bundle characteristics:**
+- One bundle per container session (overwrites on each commit)
+- Contains all commits from session start to latest commit
+- Preserves branch names and commit relationships
+- Survives hard crashes (SIGKILL, OOM, etc.)
+- Stored at: `~/.safeclaude/recovery/<project>/<container-id>.bundle`
+
+**Implementation details:**
+- Hook installation: `lib/docker.sh:293-337` (foreground), `lib/docker.sh:417-451` (background)
+- Recovery commands: `safeclaude:1083-1323`
+- Volume mount: `lib/docker.sh:147-150`
+
 ## Development Commands
 
 ### Build and Install
