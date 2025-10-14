@@ -99,6 +99,27 @@ safeclaude run myrepo
 
 That's it! Claude Code launches in an isolated container with your project code.
 
+### 3. Using Tmux for Shell Access
+
+Claude runs inside a tmux session, giving you the ability to switch between Claude and a shell without exiting the container.
+
+**Common tmux keybindings:**
+- `Ctrl+B C` - Create a new shell window
+- `Ctrl+B N` - Switch to next window
+- `Ctrl+B P` - Switch to previous window
+- `Ctrl+B D` - Detach from tmux (container keeps running)
+- `Ctrl+B ?` - Show all keybindings
+
+**Example workflow:**
+1. Start Claude: `safeclaude run myrepo`
+2. Press `Ctrl+B C` to open a shell window
+3. Explore the container: `ls ~/.claude/projects/`, `ps aux`, etc.
+4. Press `Ctrl+B P` to switch back to Claude
+5. Press `Ctrl+B D` to detach (container stays alive)
+6. Reattach later: `docker exec -it safeclaude-myrepo-<id> tmux attach-session -t claude`
+
+**Note**: When you detach with `Ctrl+B D`, the container continues running. When Claude exits (from any window), the tmux session ends and the container auto-removes as usual.
+
 ---
 
 ## Command Reference

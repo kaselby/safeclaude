@@ -288,9 +288,16 @@ echo '━━━━━━━━━━━━━━━━━━━━━━━━�
 echo 'Starting Claude Code with bypassed permissions...'
 echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 echo ''
+echo 'Tmux keybindings:'
+echo '  Ctrl+B C    - Create new shell window'
+echo '  Ctrl+B N    - Switch to next window'
+echo '  Ctrl+B P    - Switch to previous window'
+echo '  Ctrl+B D    - Detach (container keeps running)'
+echo ''
 
-# Launch Claude Code with bypassed permissions
-exec claude --dangerously-skip-permissions
+# Launch Claude Code inside tmux session
+# When Claude exits, tmux session ends and container auto-removes
+exec tmux new-session -s claude claude --dangerously-skip-permissions
 ")
     else
         # For background containers, include host config copy
