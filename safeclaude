@@ -1184,6 +1184,13 @@ cmd_recover() {
                 exit 1
             fi
 
+            # Validate container_id format (security: prevent path traversal)
+            if [[ ! "$container_id" =~ ^[a-z0-9-]+$ ]]; then
+                echo -e "${RED}Error: Invalid container ID format${NC}"
+                echo "Container ID must contain only lowercase letters, numbers, and hyphens"
+                exit 1
+            fi
+
             if ! project_exists "$project"; then
                 echo -e "${RED}Error: Project '$project' not found${NC}"
                 exit 1
@@ -1251,6 +1258,18 @@ cmd_recover() {
                 echo ""
             fi
 
+            # Verify bundle integrity before recovery
+            echo "Verifying bundle integrity..."
+            if ! git bundle verify "$bundle_file" >/dev/null 2>&1; then
+                echo -e "${RED}Error: Bundle verification failed${NC}"
+                echo "The bundle file may be corrupted or incomplete."
+                echo ""
+                echo "Bundle: $bundle_file"
+                exit 1
+            fi
+            echo -e "${GREEN}✓ Bundle verification passed${NC}"
+            echo ""
+
             # Fetch from bundle
             echo "Fetching commits from bundle..."
             if ! git fetch "$bundle_file" 'refs/*:refs/recovery/*' 2>&1; then
@@ -1299,6 +1318,13 @@ cmd_recover() {
             fi
 
             if [ -n "$container_id" ]; then
+                # Validate container_id format (security: prevent path traversal)
+                if [[ ! "$container_id" =~ ^[a-z0-9-]+$ ]]; then
+                    echo -e "${RED}Error: Invalid container ID format${NC}"
+                    echo "Container ID must contain only lowercase letters, numbers, and hyphens"
+                    exit 1
+                fi
+
                 # Clear specific bundle
                 local bundle_file="$recovery_dir/${container_id}.bundle"
                 local meta_file="$recovery_dir/${container_id}.json"
