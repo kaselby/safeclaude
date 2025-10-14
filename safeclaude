@@ -1095,6 +1095,16 @@ cmd_config() {
 cmd_recover() {
     local subcommand="$1"
 
+    # Validate project name if provided (defense in depth against manually edited projects.json)
+    if [ -n "$1" ] && [[ "$1" != "list" ]] && [[ "$1" != "clear" ]]; then
+        local potential_project="$1"
+        if [[ ! "$potential_project" =~ ^[a-zA-Z0-9_-]+$ ]] || [ ${#potential_project} -gt 64 ]; then
+            echo -e "${RED}Error: Invalid project name${NC}"
+            echo "Project names must contain only letters, numbers, hyphens, and underscores (max 64 chars)"
+            exit 1
+        fi
+    fi
+
     # If first arg looks like a project name (not a subcommand), treat as "apply"
     if [ -n "$subcommand" ] && [[ "$subcommand" != "list" ]] && [[ "$subcommand" != "clear" ]]; then
         # Direct recovery: safeclaude recover <project> <container-id>

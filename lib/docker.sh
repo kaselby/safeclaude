@@ -301,16 +301,15 @@ fi
 
 SESSION_START_TIME=\$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-# Record session start ref and timestamp (handle empty repos)
-git rev-parse HEAD 2>/dev/null > /recovery/.session-start-ref || echo '0000000000000000000000000000000000000000' > /recovery/.session-start-ref
-echo \"\$SESSION_START_TIME\" > /recovery/.session-start-time
+# Record session start ref and timestamp (handle empty repos, container-specific)
+git rev-parse HEAD 2>/dev/null > /recovery/.\$CONTAINER_ID.session-start-ref || echo '0000000000000000000000000000000000000000' > /recovery/.\$CONTAINER_ID.session-start-ref
+echo \"\$SESSION_START_TIME\" > /recovery/.\$CONTAINER_ID.session-start-time
 
 # Install post-commit hook for automatic bundle creation
 cat > .git/hooks/post-commit << 'HOOK_EOF'
 #!/bin/sh
 # SafeClaude automatic recovery bundle creation
 
-SESSION_START=\$(cat /recovery/.session-start-ref 2>/dev/null || echo HEAD)
 CONTAINER_ID=\$(hostname | cut -c1-12)
 
 # Validate container ID (security: prevent path traversal)
@@ -319,7 +318,8 @@ if [ -z \"\$CONTAINER_ID\" ] || ! echo \"\$CONTAINER_ID\" | grep -qE '^[a-z0-9-]
     exit 1
 fi
 
-SESSION_START_TIME=\$(cat /recovery/.session-start-time 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)
+SESSION_START=\$(cat /recovery/.\$CONTAINER_ID.session-start-ref 2>/dev/null || echo HEAD)
+SESSION_START_TIME=\$(cat /recovery/.\$CONTAINER_ID.session-start-time 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)
 
 # Create bundle with atomic write (security: prevent corruption on crash)
 BUNDLE_TEMP=\"/recovery/.\${CONTAINER_ID}.bundle.tmp\"
@@ -328,8 +328,11 @@ BUNDLE_FINAL=\"/recovery/\${CONTAINER_ID}.bundle\"
 if git bundle create \"\$BUNDLE_TEMP\" \${SESSION_START}..HEAD 2>/tmp/bundle-error.log; then
     mv -f \"\$BUNDLE_TEMP\" \"\$BUNDLE_FINAL\"
 else
-    # Log failure but don't fail the commit
-    echo \"[\$(date)] Bundle creation failed for \${CONTAINER_ID}\" >> /recovery/.bundle-errors.log 2>/dev/null || true
+    # Log failure to container-specific error log
+    {
+        echo \"[\$(date)] Bundle creation failed\"
+        cat /tmp/bundle-error.log 2>/dev/null || echo '(error details unavailable)'
+    } >> /recovery/.\${CONTAINER_ID}.errors 2>/dev/null || true
     rm -f \"\$BUNDLE_TEMP\" 2>/dev/null || true
     exit 0
 fi
@@ -454,14 +457,13 @@ fi
 
 SESSION_START_TIME=\$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-# Record session start ref and timestamp (handle empty repos)
-git rev-parse HEAD 2>/dev/null > /recovery/.session-start-ref || echo '0000000000000000000000000000000000000000' > /recovery/.session-start-ref
-echo \"\$SESSION_START_TIME\" > /recovery/.session-start-time
+# Record session start ref and timestamp (handle empty repos, container-specific)
+git rev-parse HEAD 2>/dev/null > /recovery/.\$CONTAINER_ID.session-start-ref || echo '0000000000000000000000000000000000000000' > /recovery/.\$CONTAINER_ID.session-start-ref
+echo \"\$SESSION_START_TIME\" > /recovery/.\$CONTAINER_ID.session-start-time
 
 # Install post-commit hook
 cat > .git/hooks/post-commit << 'HOOK_EOF'
 #!/bin/sh
-SESSION_START=\$(cat /recovery/.session-start-ref 2>/dev/null || echo HEAD)
 CONTAINER_ID=\$(hostname | cut -c1-12)
 
 # Validate container ID (security: prevent path traversal)
@@ -470,7 +472,8 @@ if [ -z \"\$CONTAINER_ID\" ] || ! echo \"\$CONTAINER_ID\" | grep -qE '^[a-z0-9-]
     exit 1
 fi
 
-SESSION_START_TIME=\$(cat /recovery/.session-start-time 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)
+SESSION_START=\$(cat /recovery/.\$CONTAINER_ID.session-start-ref 2>/dev/null || echo HEAD)
+SESSION_START_TIME=\$(cat /recovery/.\$CONTAINER_ID.session-start-time 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)
 
 # Create bundle with atomic write (security: prevent corruption on crash)
 BUNDLE_TEMP=\"/recovery/.\${CONTAINER_ID}.bundle.tmp\"
@@ -479,8 +482,11 @@ BUNDLE_FINAL=\"/recovery/\${CONTAINER_ID}.bundle\"
 if git bundle create \"\$BUNDLE_TEMP\" \${SESSION_START}..HEAD 2>/tmp/bundle-error.log; then
     mv -f \"\$BUNDLE_TEMP\" \"\$BUNDLE_FINAL\"
 else
-    # Log failure but don't fail the commit
-    echo \"[\$(date)] Bundle creation failed for \${CONTAINER_ID}\" >> /recovery/.bundle-errors.log 2>/dev/null || true
+    # Log failure to container-specific error log
+    {
+        echo \"[\$(date)] Bundle creation failed\"
+        cat /tmp/bundle-error.log 2>/dev/null || echo '(error details unavailable)'
+    } >> /recovery/.\${CONTAINER_ID}.errors 2>/dev/null || true
     rm -f \"\$BUNDLE_TEMP\" 2>/dev/null || true
     exit 0
 fi
