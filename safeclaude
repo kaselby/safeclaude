@@ -41,6 +41,7 @@ ${BLUE}SETUP COMMANDS${NC}
 
 ${BLUE}RUN COMMANDS${NC}
   run <name> [OPTIONS]          Run Claude Code for a project
+  resume <name>                 Resume a transferred conversation
 
   Options for 'run':
     --no-network                    Disable network access (enabled by default)
@@ -544,6 +545,222 @@ cmd_run() {
     echo "Container has been automatically removed"
 }
 
+# Resume a transferred conversation
+cmd_resume() {
+    local name="$1"
+
+    if [ -z "$name" ]; then
+        echo -e "${RED}Error: Project name required${NC}"
+        echo "Usage: safeclaude resume <name>"
+        exit 1
+    fi
+
+    # Validate project name (alphanumeric, hyphens, underscores only)
+    if [[ ! "$name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        echo -e "${RED}Error: Project name must contain only letters, numbers, hyphens, and underscores${NC}"
+        echo "Invalid name: $name"
+        exit 1
+    fi
+
+    # Validate project name length
+    if [ ${#name} -gt 64 ]; then
+        echo -e "${RED}Error: Project name too long (max 64 characters)${NC}"
+        exit 1
+    fi
+
+    if ! project_exists "$name"; then
+        echo -e "${RED}Error: Project '$name' not found${NC}"
+        echo ""
+        echo "Available projects:"
+        cmd_list
+        exit 1
+    fi
+
+    # Find transfer files for this project
+    local transfer_files=()
+    local metadata_files=()
+    local transfer_dir="$SAFECLAUDE_DIR/transfer"
+
+    while IFS= read -r -d '' meta_file; do
+        # Verify file is actually in transfer directory (security check)
+        local file_dir=$(dirname "$meta_file")
+        if [ "$file_dir" != "$transfer_dir" ]; then
+            echo -e "${YELLOW}Warning: Skipping file outside transfer directory${NC}" >&2
+            continue
+        fi
+        metadata_files+=("$meta_file")
+    done < <(find "$transfer_dir" -maxdepth 1 -type f -name "${name}-*.json" -print0 2>/dev/null | sort -z -r)
+
+    if [ ${#metadata_files[@]} -eq 0 ]; then
+        echo -e "${RED}No transferred conversations found for '$name'${NC}"
+        echo ""
+        echo "Transfer a conversation first using: /safeclaude $name"
+        echo "Then exit Claude and run this command again."
+        exit 1
+    fi
+
+    # If multiple transfers exist, show menu
+    local selected_meta=""
+    if [ ${#metadata_files[@]} -gt 1 ]; then
+        echo -e "${GREEN}Multiple conversations available for '$name'${NC}"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+
+        local idx=1
+        for meta_file in "${metadata_files[@]}"; do
+            local summary=$(jq -r '.summary' "$meta_file" 2>/dev/null || echo "No summary")
+            local timestamp=$(jq -r '.timestamp' "$meta_file" 2>/dev/null || echo "0")
+            local created=$(jq -r '.created' "$meta_file" 2>/dev/null || echo "Unknown")
+            local last_msg=$(jq -r '.last_messages[0] // "No preview"' "$meta_file" 2>/dev/null)
+
+            # Calculate time ago
+            local now=$(date +%s)
+            local diff=$((now - timestamp))
+            local time_ago=""
+            if [ $diff -lt 60 ]; then
+                time_ago="${diff}s ago"
+            elif [ $diff -lt 3600 ]; then
+                time_ago="$((diff / 60))m ago"
+            elif [ $diff -lt 86400 ]; then
+                time_ago="$((diff / 3600))h ago"
+            else
+                time_ago="$((diff / 86400))d ago"
+            fi
+
+            echo -e "  ${BLUE}$idx.${NC} [$time_ago] $summary"
+            echo "     Last: ${last_msg:0:70}..."
+            echo ""
+
+            idx=$((idx + 1))
+        done
+
+        echo -n "Select conversation (1-${#metadata_files[@]}, or 'q' to cancel): "
+        read -r selection
+
+        if [ "$selection" = "q" ] || [ "$selection" = "Q" ]; then
+            echo "Cancelled"
+            exit 0
+        fi
+
+        if ! [[ "$selection" =~ ^[0-9]+$ ]] || [ "$selection" -lt 1 ] || [ "$selection" -gt ${#metadata_files[@]} ]; then
+            echo -e "${RED}Invalid selection${NC}"
+            exit 1
+        fi
+
+        selected_meta="${metadata_files[$((selection - 1))]}"
+    else
+        selected_meta="${metadata_files[0]}"
+        local summary=$(jq -r '.summary' "$selected_meta" 2>/dev/null || echo "Conversation")
+        echo -e "${GREEN}Resuming: $summary${NC}"
+        echo ""
+    fi
+
+    # Extract metadata
+    local format_version=$(jq -r '.format_version // "1.0"' "$selected_meta" 2>/dev/null)
+    local conversation_id=$(jq -r '.conversation_id' "$selected_meta" 2>/dev/null)
+    local timestamp=$(jq -r '.timestamp' "$selected_meta" 2>/dev/null)
+
+    # Validate format version
+    if [ "$format_version" != "1.0" ]; then
+        echo -e "${YELLOW}Warning: Metadata format version $format_version may not be fully compatible${NC}"
+        echo "This script supports format version 1.0"
+        echo ""
+        read -p "Attempt to resume anyway? [y/N] " -r
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo "Cancelled"
+            exit 0
+        fi
+        echo ""
+    fi
+
+    # Validate metadata
+    if [ -z "$conversation_id" ] || [ "$conversation_id" = "null" ]; then
+        echo -e "${RED}Error: Invalid metadata (missing conversation_id)${NC}"
+        exit 1
+    fi
+
+    # Validate conversation_id is UUID format (case-insensitive per RFC 4122)
+    if [[ ! "$conversation_id" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+        echo -e "${RED}Error: Invalid conversation ID format${NC}"
+        exit 1
+    fi
+
+    # Validate timestamp is numeric
+    if [ -z "$timestamp" ] || [ "$timestamp" = "null" ] || ! [[ "$timestamp" =~ ^[0-9]+$ ]]; then
+        echo -e "${RED}Error: Invalid timestamp format${NC}"
+        exit 1
+    fi
+
+    local transfer_jsonl="$SAFECLAUDE_DIR/transfer/${name}-${timestamp}.jsonl"
+
+    # Verify conversation file exists and is readable
+    if [ ! -f "$transfer_jsonl" ]; then
+        echo -e "${RED}Error: Conversation file not found: $transfer_jsonl${NC}"
+        exit 1
+    fi
+
+    if [ ! -r "$transfer_jsonl" ]; then
+        echo -e "${RED}Error: Cannot read conversation file: $transfer_jsonl${NC}"
+        exit 1
+    fi
+
+    # Quick validation of JSONL format
+    if ! head -1 "$transfer_jsonl" | jq empty 2>/dev/null; then
+        echo -e "${RED}Error: Conversation file is not valid JSONL${NC}"
+        exit 1
+    fi
+
+    # Determine the project directory path that Claude expects
+    # Claude runs as user with home at /home/node, not /root
+    # Working directory in container is /home/node/repo
+    local project_dir="/home/node/repo"
+    local project_dir_name=$(echo "$project_dir" | sed 's|/|-|g')
+    local container_history_path="/home/node/.claude/projects/${project_dir_name}/${conversation_id}.jsonl"
+
+    echo "Mounting conversation history..."
+    echo ""
+
+    # Run with the conversation mounted and --persist to save it
+    cmd_run "$name" \
+        --mount "${transfer_jsonl}:${container_history_path}:rw" \
+        --persist
+
+    local exit_code=$?
+
+    # Only clean up if container exited successfully AND volume was created
+    if [ $exit_code -eq 0 ]; then
+        # Verify the persistence volume exists (conversation should be saved there)
+        local volume_name="safeclaude-${name}-config"
+        if docker volume inspect "$volume_name" &>/dev/null; then
+            echo ""
+            echo "Cleaning up transfer files..."
+            if rm -f "$selected_meta" "$transfer_jsonl"; then
+                echo -e "${GREEN}✓ Transfer files removed${NC}"
+                echo -e "${GREEN}✓ Conversation persisted to volume: $volume_name${NC}"
+            else
+                echo -e "${YELLOW}⚠ Warning: Could not remove transfer files${NC}"
+                echo "  Files remain at:"
+                echo "    $selected_meta"
+                echo "    $transfer_jsonl"
+            fi
+        else
+            echo ""
+            echo -e "${YELLOW}⚠ Warning: Persistence volume not found${NC}"
+            echo "  Transfer files preserved for safety:"
+            echo "    $selected_meta"
+            echo "    $transfer_jsonl"
+            echo "  You can retry with: safeclaude resume $name"
+        fi
+    else
+        echo ""
+        echo -e "${YELLOW}⚠ Container exited with code $exit_code${NC}"
+        echo "  Transfer files preserved for retry:"
+        echo "    $selected_meta"
+        echo "    $transfer_jsonl"
+        echo "  You can retry with: safeclaude resume $name"
+    fi
+}
+
 # Start a project in background
 cmd_start() {
     local name="$1"
@@ -890,6 +1107,9 @@ main() {
             ;;
         run)
             cmd_run "$@"
+            ;;
+        resume)
+            cmd_resume "$@"
             ;;
         start)
             cmd_start "$@"

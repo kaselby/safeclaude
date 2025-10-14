@@ -120,6 +120,19 @@ cp "$SCRIPT_DIR/lib/"*.sh "$INSTALL_DIR/lib/" 2>/dev/null || true
 echo -e "${GREEN}✓ SafeClaude command installed to $INSTALL_DIR/safeclaude${NC}"
 echo ""
 
+# Install slash command for Claude Code
+echo "Installing slash command..."
+CLAUDE_COMMANDS_DIR="$HOME/.claude/commands"
+mkdir -p "$CLAUDE_COMMANDS_DIR"
+
+if [ -d "$SCRIPT_DIR/commands" ]; then
+    cp "$SCRIPT_DIR/commands/"*.md "$CLAUDE_COMMANDS_DIR/" 2>/dev/null || true
+    echo -e "${GREEN}✓ Slash commands installed to $CLAUDE_COMMANDS_DIR${NC}"
+else
+    echo -e "${YELLOW}No slash commands found to install${NC}"
+fi
+echo ""
+
 # Check if install dir is in PATH
 if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
     echo -e "${YELLOW}Warning: $INSTALL_DIR is not in your PATH${NC}"

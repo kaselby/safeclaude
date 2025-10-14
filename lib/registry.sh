@@ -12,6 +12,10 @@ init_safeclaude_dir() {
     mkdir -p "$SAFECLAUDE_DIR"
     mkdir -p "$KEYS_DIR"
 
+    # Create transfer directory with secure permissions (700 - owner only)
+    mkdir -p "$SAFECLAUDE_DIR/transfer"
+    chmod 700 "$SAFECLAUDE_DIR/transfer"
+
     # Create empty projects.json if it doesn't exist
     if [ ! -f "$PROJECTS_FILE" ]; then
         echo '{}' > "$PROJECTS_FILE"
