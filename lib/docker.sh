@@ -6,6 +6,10 @@
 # Use username in image name to prevent namespace collisions on shared systems
 IMAGE_NAME="safeclaude-$(whoami)/claude-sandbox"
 
+# Container working directory (must match: Dockerfile WORKDIR + startup script git clone location)
+# See: Dockerfile:36 (WORKDIR /workspace), docker.sh:271 (git clone ... repo)
+CONTAINER_WORKDIR="/workspace/repo"
+
 # Build docker run command
 # Usage: build_docker_command <project_name> <repo_url> <key_path> <instructions_file> <options>
 # Options: --no-network, --persist, --detach, --name <container_name>, --host-config, --no-host-config,
@@ -296,8 +300,23 @@ echo '  Ctrl+B D    - Detach (container keeps running)'
 echo ''
 
 # Launch Claude Code inside tmux session
-# When Claude exits, tmux session ends and container auto-removes
-exec tmux new-session -s claude claude --dangerously-skip-permissions
+# When you detach (Ctrl+B D), you'll return to a bash shell
+# Type 'tmux attach -t claude' to reattach, or 'exit' to quit
+# When you exit the shell, container auto-removes
+tmux new-session -s claude claude --dangerously-skip-permissions
+
+# After tmux exits (Claude closed or you detached), drop to shell
+echo ''
+echo 'Claude session ended or detached.'
+echo 'You are now in a shell inside the container.'
+echo ''
+echo 'Commands:'
+echo '  tmux attach -t claude  - Reattach to Claude session (if detached)'
+echo '  exit                   - Exit container (auto-removes)'
+echo ''
+
+# Start interactive bash shell
+exec /bin/bash
 ")
     else
         # For background containers, include host config copy

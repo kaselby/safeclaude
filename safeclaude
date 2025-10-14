@@ -711,9 +711,8 @@ cmd_resume() {
     fi
 
     # Determine the project directory path that Claude expects
-    # Claude runs as user with home at /home/node, not /root
-    # Working directory in container is /home/node/repo
-    local project_dir="/home/node/repo"
+    # Use shared constant from lib/docker.sh to ensure consistency
+    local project_dir="$CONTAINER_WORKDIR"
     local project_dir_name=$(echo "$project_dir" | sed 's|/|-|g')
     local container_history_path="/home/node/.claude/projects/${project_dir_name}/${conversation_id}.jsonl"
 

@@ -115,10 +115,13 @@ Claude runs inside a tmux session, giving you the ability to switch between Clau
 2. Press `Ctrl+B C` to open a shell window
 3. Explore the container: `ls ~/.claude/projects/`, `ps aux`, etc.
 4. Press `Ctrl+B P` to switch back to Claude
-5. Press `Ctrl+B D` to detach (container stays alive)
-6. Reattach later: `docker exec -it safeclaude-myrepo-<id> tmux attach-session -t claude`
+5. Press `Ctrl+B D` to detach - you'll return to a bash shell in the container
+6. From the shell:
+   - Type `tmux attach -t claude` to reattach to Claude
+   - Explore: `ls ~/.claude/projects/`, inspect logs, etc.
+   - Type `exit` to quit the container (auto-removes)
 
-**Note**: When you detach with `Ctrl+B D`, the container continues running. When Claude exits (from any window), the tmux session ends and the container auto-removes as usual.
+**Note**: When you detach with `Ctrl+B D`, you get a bash shell inside the container. The container stays alive until you type `exit`. If Claude crashes or exits, you'll still have shell access to inspect the filesystem before exiting.
 
 ---
 

@@ -33,6 +33,7 @@ RUN git config --global user.name "${GIT_USER_NAME}" && \
     git config --global user.email "${GIT_USER_EMAIL}"
 
 # Create workspace directory
+# NOTE: Must match CONTAINER_WORKDIR in lib/docker.sh (combined with 'repo' clone dir = /workspace/repo)
 WORKDIR /workspace
 
 # Set up SSH directory for node user (non-root)
