@@ -267,17 +267,88 @@ cmd_setup() {
         echo ""
     fi
 
-    # Enable branch protection
-    echo "Enabling branch protection on 'main'..."
+    # Check current branch protection settings
+    echo "Checking branch protection on 'main'..."
+    local enforce_admins="true"
+    local current_enforce_admins
+
+    # Try to get current enforce_admins setting
+    if current_enforce_admins=$(gh api "repos/$owner_repo/branches/main/protection" --jq '.enforce_admins.enabled' 2>/dev/null); then
+        echo "Current branch protection found: enforce_admins=$current_enforce_admins"
+
+        if [ "$current_enforce_admins" = "false" ]; then
+            echo ""
+            echo -e "${YELLOW}⚠️  Security Notice: Admin Bypass Detected${NC}"
+            echo ""
+            echo "Your branch protection currently allows admins (and deploy keys with"
+            echo "write access) to bypass the pull request requirement."
+            echo ""
+            echo "Options:"
+            echo "  1. Enable enforce_admins=true  (More Secure)"
+            echo "     - Deploy keys CANNOT push directly to main"
+            echo "     - Your account CANNOT push directly to main"
+            echo "     - All changes must go through pull requests"
+            echo ""
+            echo "  2. Keep enforce_admins=false  (Less Secure, More Convenient)"
+            echo "     - Deploy keys CAN bypass and push directly to main"
+            echo "     - Your account CAN bypass and push directly to main"
+            echo "     - Provides convenience but reduces security"
+            echo ""
+            read -p "Enable enforce_admins for maximum security? [Y/n] " -n 1 -r
+            echo ""
+
+            if [[ $REPLY =~ ^[Nn]$ ]]; then
+                enforce_admins="false"
+                echo -e "${YELLOW}⚠ Keeping enforce_admins=false (deploy keys can bypass protection)${NC}"
+            else
+                enforce_admins="true"
+                echo -e "${GREEN}✓ Will enable enforce_admins=true (maximum security)${NC}"
+            fi
+            echo ""
+        else
+            enforce_admins="true"
+            echo -e "${GREEN}✓ enforce_admins is already enabled${NC}"
+            echo ""
+        fi
+    else
+        # Branch protection doesn't exist yet
+        echo "No branch protection found (will create with default settings)"
+        echo ""
+        echo -e "${BLUE}Branch Protection Configuration${NC}"
+        echo ""
+        echo "SafeClaude will enable branch protection requiring pull requests."
+        echo ""
+        echo "Choose security level for enforce_admins:"
+        echo "  1. true  - Maximum security (recommended for untrusted AI)"
+        echo "     Deploy keys CANNOT push directly to main"
+        echo ""
+        echo "  2. false - Convenience mode (less secure)"
+        echo "     Deploy keys CAN bypass and push directly to main"
+        echo ""
+        read -p "Enable strict enforcement (enforce_admins=true)? [Y/n] " -n 1 -r
+        echo ""
+
+        if [[ $REPLY =~ ^[Nn]$ ]]; then
+            enforce_admins="false"
+            echo -e "${YELLOW}⚠ Using enforce_admins=false (less secure)${NC}"
+        else
+            enforce_admins="true"
+            echo -e "${GREEN}✓ Using enforce_admins=true (maximum security)${NC}"
+        fi
+        echo ""
+    fi
+
+    # Apply branch protection with chosen setting
+    echo "Applying branch protection settings..."
     if gh api "repos/$owner_repo/branches/main/protection" \
         --method PUT \
         --field "required_pull_request_reviews[required_approving_review_count]=0" \
-        --field "enforce_admins=false" \
+        --field "enforce_admins=$enforce_admins" \
         --field "required_status_checks=null" \
         --field "restrictions=null" &> /dev/null; then
-        echo -e "${GREEN}✓ Branch protection enabled${NC}"
+        echo -e "${GREEN}✓ Branch protection configured (enforce_admins=$enforce_admins)${NC}"
     else
-        echo -e "${YELLOW}⚠ Could not enable branch protection (may already be enabled)${NC}"
+        echo -e "${YELLOW}⚠ Could not update branch protection${NC}"
     fi
     echo ""
 
