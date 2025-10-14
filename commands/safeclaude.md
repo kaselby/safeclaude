@@ -5,12 +5,16 @@ Find the conversation history file for THIS specific Claude Code session and pre
 - `/safeclaude <project-name> <summary>` - Use user-provided summary
 
 **Steps:**
-1. Identify the current conversation file:
-   - Get current working directory and find the corresponding project directory in ~/.claude/projects/
-   - List all .jsonl files in that directory sorted by modification time
-   - Read the last few messages from the most recent file(s)
-   - Match against your conversation memory to confirm it's the right file
-   - If uncertain, present options to the user for confirmation
+1. Identify the current conversation file by verifying assistant messages against your memory:
+   - Get current working directory and convert to Claude project path format (/ → -)
+   - Check files for one whose contents match your memory of this conversation
+   - An easy way to check is to use grep to extract assistant messages - for example:
+     ```bash
+     grep '"type":"assistant"' <file> | tail -5 | jq -r '.message.content[] | select(.type=="text") | .text' | head -c 400
+     ```
+   - Check the 3-5 most recent .jsonl files (sorted by mtime)
+   - Once you find a file where the assistant messages clearly match your conversation memory, that's the file - proceed immediately
+   - Only ask user if you can't find a match in the top 3-4 files (very rare)
 2. Generate or use provided summary:
    - If summary provided: use it
    - If not: analyze conversation and create concise 1-2 sentence summary
