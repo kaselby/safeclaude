@@ -51,18 +51,18 @@ SafeClaude automatically backs up all commits made within container sessions to 
 **Recovery workflow:**
 ```bash
 # List available recovery bundles
-safeclaude recovery list myproject
+safeclaude recover list myproject
 
-# Apply a specific bundle to your working directory
+# Recover commits from a crashed session
 cd /path/to/myproject
-safeclaude recovery apply myproject <container-id>
+safeclaude recover myproject <container-id>
 
 # Recovered commits are fetched as refs/recovery/<branch>
 git log recovery/feature-branch
 git merge recovery/feature-branch
 
 # Clear old bundles
-safeclaude recovery clear myproject
+safeclaude recover clear myproject
 ```
 
 **Bundle characteristics:**

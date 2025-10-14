@@ -69,9 +69,9 @@ ${BLUE}CONFIGURATION COMMANDS${NC}
   config remove-api-key         Remove API key from config
 
 ${BLUE}RECOVERY COMMANDS${NC}
-  recovery list <project>       List recovery bundles for a project
-  recovery apply <project> <id> Apply a recovery bundle
-  recovery clear <project> [id] Clear recovery bundles
+  recover <project> <id>        Recover commits from a crashed session
+  recover list <project>        List available recovery bundles
+  recover clear <project> [id]  Clear recovery bundles
 
 ${BLUE}UTILITY COMMANDS${NC}
   --help, help                  Show this help message
@@ -111,10 +111,10 @@ ${BLUE}EXAMPLES${NC}
   safeclaude attach agent-1
 
   # List recovery bundles (after a crash)
-  safeclaude recovery list myrepo
+  safeclaude recover list myrepo
 
-  # Apply a recovery bundle
-  safeclaude recovery apply myrepo abc123def456
+  # Recover commits from a crashed session
+  safeclaude recover myrepo abc123def456
 
 ${BLUE}SECURITY${NC}
   - Per-project deploy keys (isolated credentials)
@@ -1092,9 +1092,29 @@ cmd_config() {
 }
 
 # Recovery management
-cmd_recovery() {
+cmd_recover() {
     local subcommand="$1"
-    shift || true
+
+    # If first arg looks like a project name (not a subcommand), treat as "apply"
+    if [ -n "$subcommand" ] && [[ "$subcommand" != "list" ]] && [[ "$subcommand" != "clear" ]]; then
+        # Direct recovery: safeclaude recover <project> <container-id>
+        local project="$subcommand"
+        local container_id="$2"
+
+        if [ -z "$container_id" ]; then
+            echo -e "${RED}Error: Container ID required${NC}"
+            echo "Usage: safeclaude recover <project> <container-id>"
+            echo ""
+            echo "To list available bundles:"
+            echo "  safeclaude recover list <project>"
+            exit 1
+        fi
+
+        # Call the apply logic directly
+        subcommand="apply"
+    else
+        shift || true
+    fi
 
     case "$subcommand" in
         list)
@@ -1102,7 +1122,7 @@ cmd_recovery() {
 
             if [ -z "$project" ]; then
                 echo -e "${RED}Error: Project name required${NC}"
-                echo "Usage: safeclaude recovery list <project>"
+                echo "Usage: safeclaude recover list <project>"
                 exit 1
             fi
 
@@ -1150,8 +1170,8 @@ cmd_recovery() {
                 echo ""
             done
 
-            echo "To apply a bundle, run:"
-            echo "  safeclaude recovery apply <project> <container-id>"
+            echo "To recover from a bundle, run:"
+            echo "  safeclaude recover <project> <container-id>"
             ;;
 
         apply)
@@ -1160,7 +1180,7 @@ cmd_recovery() {
 
             if [ -z "$project" ] || [ -z "$container_id" ]; then
                 echo -e "${RED}Error: Project name and container ID required${NC}"
-                echo "Usage: safeclaude recovery apply <project> <container-id>"
+                echo "Usage: safeclaude recover <project> <container-id>"
                 exit 1
             fi
 
@@ -1177,7 +1197,7 @@ cmd_recovery() {
                 echo -e "${RED}Error: Bundle not found: $bundle_file${NC}"
                 echo ""
                 echo "Available bundles:"
-                cmd_recovery list "$project"
+                cmd_recover list "$project"
                 exit 1
             fi
 
@@ -1258,11 +1278,11 @@ cmd_recovery() {
 
             if [ -z "$project" ]; then
                 echo -e "${RED}Error: Project name required${NC}"
-                echo "Usage: safeclaude recovery clear <project> [container-id]"
+                echo "Usage: safeclaude recover clear <project> [container-id]"
                 echo ""
                 echo "Examples:"
-                echo "  safeclaude recovery clear myproject                 # Clear all bundles"
-                echo "  safeclaude recovery clear myproject abc123def456    # Clear specific bundle"
+                echo "  safeclaude recover clear myproject                 # Clear all bundles"
+                echo "  safeclaude recover clear myproject abc123def456    # Clear specific bundle"
                 exit 1
             fi
 
@@ -1323,12 +1343,12 @@ cmd_recovery() {
             ;;
 
         *)
-            echo -e "${RED}Error: Unknown recovery subcommand '$subcommand'${NC}"
+            echo -e "${RED}Error: Unknown recover subcommand '$subcommand'${NC}"
             echo ""
-            echo "Available subcommands:"
-            echo "  safeclaude recovery list <project>                   List recovery bundles"
-            echo "  safeclaude recovery apply <project> <container-id>   Apply a recovery bundle"
-            echo "  safeclaude recovery clear <project> [container-id]   Clear recovery bundles"
+            echo "Available commands:"
+            echo "  safeclaude recover <project> <container-id>       Recover commits from bundle"
+            echo "  safeclaude recover list <project>                 List recovery bundles"
+            echo "  safeclaude recover clear <project> [container-id] Clear recovery bundles"
             exit 1
             ;;
     esac
@@ -1382,8 +1402,8 @@ main() {
         config)
             cmd_config "$@"
             ;;
-        recovery)
-            cmd_recovery "$@"
+        recover)
+            cmd_recover "$@"
             ;;
         --help|help|-h)
             usage
